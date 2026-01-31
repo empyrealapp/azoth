@@ -55,6 +55,16 @@ pub trait EventIter: Send {
     fn next(&mut self) -> Result<Option<(EventId, Vec<u8>)>>;
 }
 
+/// Iterator over key-value pairs in the canonical store
+///
+/// Note: Not required to be Send, as some backends (LMDB) have thread-affine cursors
+pub trait StateIter {
+    /// Get the next key-value pair
+    ///
+    /// Returns None when iteration is complete
+    fn next(&mut self) -> Result<Option<(Vec<u8>, Vec<u8>)>>;
+}
+
 /// Transaction for canonical store operations
 ///
 /// Supports three-phase commit:
@@ -131,6 +141,21 @@ pub trait CanonicalStore: Send + Sync {
     /// - `from`: Starting event ID (inclusive)
     /// - `to`: Optional ending event ID (exclusive)
     fn iter_events(&self, from: EventId, to: Option<EventId>) -> Result<Box<dyn EventIter>>;
+
+    /// Iterate state keys in a range
+    ///
+    /// - `start`: Starting key (inclusive). Use empty slice for beginning.
+    /// - `end`: Optional ending key (exclusive). Use None for end.
+    ///
+    /// Returns an iterator over (key, value) pairs in sorted order.
+    fn range(&self, start: &[u8], end: Option<&[u8]>) -> Result<Box<dyn StateIter>>;
+
+    /// Iterate all state keys with a given prefix
+    ///
+    /// - `prefix`: Key prefix to match
+    ///
+    /// Returns an iterator over (key, value) pairs starting with the prefix.
+    fn scan_prefix(&self, prefix: &[u8]) -> Result<Box<dyn StateIter>>;
 
     /// Seal the store at the current event ID
     ///
