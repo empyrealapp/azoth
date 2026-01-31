@@ -266,21 +266,14 @@ impl CanonicalStore for LmdbCanonicalStore {
     }
 
     fn range(&self, start: &[u8], end: Option<&[u8]>) -> Result<Box<dyn traits::StateIter>> {
-        let iter = crate::state_iter::LmdbStateIter::new(
-            self.env.clone(),
-            self.state_db,
-            start,
-            end,
-        )?;
+        let iter =
+            crate::state_iter::LmdbStateIter::new(self.env.clone(), self.state_db, start, end)?;
         Ok(Box::new(iter))
     }
 
     fn scan_prefix(&self, prefix: &[u8]) -> Result<Box<dyn traits::StateIter>> {
-        let iter = crate::state_iter::LmdbStateIter::with_prefix(
-            self.env.clone(),
-            self.state_db,
-            prefix,
-        )?;
+        let iter =
+            crate::state_iter::LmdbStateIter::with_prefix(self.env.clone(), self.state_db, prefix)?;
         Ok(Box::new(iter))
     }
 
