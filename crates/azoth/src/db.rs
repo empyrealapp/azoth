@@ -215,6 +215,134 @@ impl AzothDb {
         })
     }
 
+    /// Execute an async SQL query on the projection store
+    ///
+    /// This is a convenience wrapper around `projection().query_async()`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let balance: i64 = db.query_async(|conn| {
+    ///     conn.query_row("SELECT balance FROM accounts WHERE id = ?1", [1], |row| row.get(0))
+    /// }).await?;
+    /// ```
+    pub async fn query_async<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&rusqlite::Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        self.projection.query_async(f).await
+    }
+
+    /// Execute a synchronous SQL query on the projection store
+    ///
+    /// # Example
+    /// ```ignore
+    /// let balance: i64 = db.query(|conn| {
+    ///     conn.query_row("SELECT balance FROM accounts WHERE id = ?1", [1], |row| row.get(0))
+    /// })?;
+    /// ```
+    pub fn query<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&rusqlite::Connection) -> Result<R>,
+    {
+        self.projection.query(f)
+    }
+
+    /// Execute arbitrary SQL statements asynchronously
+    ///
+    /// # Example
+    /// ```ignore
+    /// db.execute_async(|conn| {
+    ///     conn.execute("CREATE TABLE balances (id INTEGER PRIMARY KEY, amount INTEGER)", [])?;
+    ///     Ok(())
+    /// }).await?;
+    /// ```
+    pub async fn execute_async<F>(&self, f: F) -> Result<()>
+    where
+        F: FnOnce(&rusqlite::Connection) -> Result<()> + Send + 'static,
+    {
+        self.projection.execute_async(f).await
+    }
+
+    /// Execute arbitrary SQL statements synchronously
+    ///
+    /// # Example
+    /// ```ignore
+    /// db.execute(|conn| {
+    ///     conn.execute("CREATE TABLE balances (id INTEGER PRIMARY KEY, amount INTEGER)", [])?;
+    ///     Ok(())
+    /// })?;
+    /// ```
+    pub fn execute<F>(&self, f: F) -> Result<()>
+    where
+        F: FnOnce(&rusqlite::Connection) -> Result<()>,
+    {
+        self.projection.execute(f)
+    }
+
+    /// Execute a SQL transaction
+    ///
+    /// # Example
+    /// ```ignore
+    /// db.transaction(|tx| {
+    ///     tx.execute("INSERT INTO accounts (id, balance) VALUES (?1, ?2)", params![1, 100])?;
+    ///     tx.execute("INSERT INTO accounts (id, balance) VALUES (?1, ?2)", params![2, 200])?;
+    ///     Ok(())
+    /// })?;
+    /// ```
+    pub fn transaction<F>(&self, f: F) -> Result<()>
+    where
+        F: FnOnce(&rusqlite::Transaction) -> Result<()>,
+    {
+        self.projection.transaction(f)
+    }
+
+    /// Execute a SQL transaction asynchronously
+    pub async fn transaction_async<F>(&self, f: F) -> Result<()>
+    where
+        F: FnOnce(&rusqlite::Transaction) -> Result<()> + Send + 'static,
+    {
+        self.projection.transaction_async(f).await
+    }
+
+    /// Scan state keys with a prefix
+    ///
+    /// Returns an iterator over (key, value) pairs with keys starting with the prefix.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use azoth_core::traits::StateIter;
+    ///
+    /// let mut iter = db.scan_prefix(b"user:")?;
+    /// while let Some((key, value)) = iter.next()? {
+    ///     println!("Key: {:?}, Value: {:?}", key, value);
+    /// }
+    /// ```
+    pub fn scan_prefix(&self, prefix: &[u8]) -> Result<Box<dyn azoth_core::traits::StateIter>> {
+        use azoth_core::traits::CanonicalStore;
+        self.canonical.scan_prefix(prefix)
+    }
+
+    /// Iterate state keys in a range
+    ///
+    /// # Example
+    /// ```ignore
+    /// use azoth_core::traits::StateIter;
+    ///
+    /// let mut iter = db.range(b"user:a", Some(b"user:z"))?;
+    /// while let Some((key, value)) = iter.next()? {
+    ///     println!("Key: {:?}, Value: {:?}", key, value);
+    /// }
+    /// ```
+    pub fn range(
+        &self,
+        start: &[u8],
+        end: Option<&[u8]>,
+    ) -> Result<Box<dyn azoth_core::traits::StateIter>> {
+        use azoth_core::traits::CanonicalStore;
+        self.canonical.range(start, end)
+    }
+
     /// Close the database (ensures clean shutdown)
     pub fn close(self) -> Result<()> {
         use crate::{CanonicalStore, ProjectionStore};
