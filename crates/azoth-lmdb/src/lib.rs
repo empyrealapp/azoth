@@ -1,0 +1,19 @@
+//! LMDB-backed canonical store implementation
+//!
+//! Provides a transactional KV store + append-only event log using LMDB.
+//!
+//! Key features:
+//! - Atomic commits over state + events
+//! - Big-endian event ID encoding for proper sort order
+//! - Stripe locking for concurrent preflight validation
+//! - Hot copy backup support
+//! - Single-writer semantics (enforced by mutex)
+
+pub mod backup;
+pub mod iter;
+pub mod keys;
+pub mod store;
+pub mod txn;
+
+pub use store::LmdbCanonicalStore;
+pub use txn::LmdbWriteTxn;

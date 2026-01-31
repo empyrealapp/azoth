@@ -1,0 +1,7 @@
+[build]
+# Use all available CPU cores
+jobs = -1
+
+[term]
+# Better error formatting
+color = "always"

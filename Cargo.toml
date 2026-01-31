@@ -1,0 +1,70 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/azoth-core",
+    "crates/azoth-lmdb",
+    "crates/azoth-sqlite",
+    "crates/azoth-file-log",
+    "crates/azoth-projector",
+    "crates/azoth",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+authors = ["johnny@empyrealsdk.com"]
+license = "MIT"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# Allow some pedantic lints that are too strict
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[workspace.dependencies]
+# Core dependencies
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "2.0"
+tracing = "0.1"
+anyhow = "1.0"
+toml = "0.8"
+
+# Async runtime for stripe locking
+tokio = { version = "1.0", features = ["rt", "sync", "macros"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+
+# LMDB
+lmdb = "0.8"
+
+# SQLite
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# File I/O
+memmap2 = "0.9"
+
+# Serialization
+bincode = "1.3"
+serde_json = "1.0"
+rmp-serde = "1.3"  # MessagePack support
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Dev/test dependencies
+tempfile = "3.0"
+proptest = "1.0"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Workspace crates
+azoth-core = { path = "crates/azoth-core" }
+azoth-lmdb = { path = "crates/azoth-lmdb" }
+azoth-sqlite = { path = "crates/azoth-sqlite" }
+azoth-file-log = { path = "crates/azoth-file-log" }
+azoth-projector = { path = "crates/azoth-projector" }
