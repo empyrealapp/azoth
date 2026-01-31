@@ -45,7 +45,7 @@ pub use azoth_core::{
     error::{AzothError, Result},
     traits::{
         CanonicalStore, CanonicalTxn, DecodedEvent, EventApplier, EventDecoder, EventIter,
-        PreflightResult, ProjectionStore, ProjectionTxn,
+        PreflightResult, ProjectionStore, ProjectionTxn, StateIter,
     },
     types::{BackupInfo, BackupManifest, CanonicalMeta, CommitInfo, EventBytes, EventId},
     LockManager,

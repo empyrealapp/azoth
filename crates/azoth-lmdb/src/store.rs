@@ -2,7 +2,7 @@ use azoth_core::{
     error::{AzothError, Result},
     event_log::{EventLog, EventLogIterator},
     lock_manager::LockManager,
-    traits::{CanonicalStore, EventIter},
+    traits::{self, CanonicalStore, EventIter},
     types::{BackupInfo, CanonicalMeta, EventId},
     CanonicalConfig,
 };
@@ -263,6 +263,18 @@ impl CanonicalStore for LmdbCanonicalStore {
         // Convert EventLogIterator to EventIter via adapter
         let iter = self.event_log.iter_range(from, to)?;
         Ok(Box::new(EventIterAdapter(iter)))
+    }
+
+    fn range(&self, start: &[u8], end: Option<&[u8]>) -> Result<Box<dyn traits::StateIter>> {
+        let iter =
+            crate::state_iter::LmdbStateIter::new(self.env.clone(), self.state_db, start, end)?;
+        Ok(Box::new(iter))
+    }
+
+    fn scan_prefix(&self, prefix: &[u8]) -> Result<Box<dyn traits::StateIter>> {
+        let iter =
+            crate::state_iter::LmdbStateIter::with_prefix(self.env.clone(), self.state_db, prefix)?;
+        Ok(Box::new(iter))
     }
 
     fn seal(&self) -> Result<EventId> {
