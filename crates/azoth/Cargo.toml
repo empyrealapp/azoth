@@ -4,6 +4,13 @@ version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+description = "High-performance embedded database for state management and event sourcing with ACID guarantees"
+readme = "../../README.md"
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+keywords.workspace = true
+categories.workspace = true
 
 [dependencies]
 azoth-core = { workspace = true }

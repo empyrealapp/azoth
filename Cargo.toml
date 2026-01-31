@@ -14,6 +14,11 @@ version = "0.1.0"
 edition = "2021"
 authors = ["johnny@empyrealsdk.com"]
 license = "MIT"
+repository = "https://github.com/empyrealapp/azoth"
+homepage = "https://github.com/empyrealapp/azoth"
+documentation = "https://docs.rs/azoth"
+keywords = ["database", "event-sourcing", "embedded", "kv-store", "lmdb"]
+categories = ["database-implementations", "data-structures"]
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
@@ -63,8 +68,8 @@ proptest = "1.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Workspace crates
-azoth-core = { path = "crates/azoth-core" }
-azoth-lmdb = { path = "crates/azoth-lmdb" }
-azoth-sqlite = { path = "crates/azoth-sqlite" }
-azoth-file-log = { path = "crates/azoth-file-log" }
-azoth-projector = { path = "crates/azoth-projector" }
+azoth-core = { version = "0.1.0", path = "crates/azoth-core" }
+azoth-lmdb = { version = "0.1.0", path = "crates/azoth-lmdb" }
+azoth-sqlite = { version = "0.1.0", path = "crates/azoth-sqlite" }
+azoth-file-log = { version = "0.1.0", path = "crates/azoth-file-log" }
+azoth-projector = { version = "0.1.0", path = "crates/azoth-projector" }
