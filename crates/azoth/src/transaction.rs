@@ -62,7 +62,9 @@ impl<'a> PreflightContext<'a> {
         if let Some(cached) = self.cache.get(key) {
             match cached {
                 CachedValue::Some(bytes) => return TypedValue::from_bytes(&bytes),
-                CachedValue::None => return Err(AzothError::InvalidState("Key does not exist".into())),
+                CachedValue::None => {
+                    return Err(AzothError::InvalidState("Key does not exist".into()))
+                }
             }
         }
 
@@ -71,7 +73,8 @@ impl<'a> PreflightContext<'a> {
         match txn.get_state(key)? {
             Some(bytes) => {
                 // Cache the raw bytes
-                self.cache.insert(key.to_vec(), CachedValue::Some(bytes.clone()));
+                self.cache
+                    .insert(key.to_vec(), CachedValue::Some(bytes.clone()));
                 TypedValue::from_bytes(&bytes)
             }
             None => {
@@ -97,7 +100,8 @@ impl<'a> PreflightContext<'a> {
         match txn.get_state(key)? {
             Some(bytes) => {
                 // Cache the raw bytes
-                self.cache.insert(key.to_vec(), CachedValue::Some(bytes.clone()));
+                self.cache
+                    .insert(key.to_vec(), CachedValue::Some(bytes.clone()));
                 Ok(Some(TypedValue::from_bytes(&bytes)?))
             }
             None => {

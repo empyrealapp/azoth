@@ -27,11 +27,10 @@ fn test_preflight_cache_hot_keys() -> Result<()> {
     let (db, _temp) = create_test_db_with_cache(true);
 
     // Initialize a hot key
-    Transaction::new(&db)
-        .execute(|ctx| {
-            ctx.set(b"balance", &TypedValue::I64(1000))?;
-            Ok(())
-        })?;
+    Transaction::new(&db).execute(|ctx| {
+        ctx.set(b"balance", &TypedValue::I64(1000))?;
+        Ok(())
+    })?;
 
     // Read the same key multiple times during preflight
     // First read should be a cache miss, subsequent reads should be cache hits
@@ -63,11 +62,10 @@ fn test_preflight_cache_invalidation() -> Result<()> {
     let (db, _temp) = create_test_db_with_cache(true);
 
     // Initialize a key
-    Transaction::new(&db)
-        .execute(|ctx| {
-            ctx.set(b"value", &TypedValue::I64(100))?;
-            Ok(())
-        })?;
+    Transaction::new(&db).execute(|ctx| {
+        ctx.set(b"value", &TypedValue::I64(100))?;
+        Ok(())
+    })?;
 
     // Read it (should be cached)
     Transaction::new(&db)
@@ -106,14 +104,13 @@ fn test_preflight_cache_concurrent() -> Result<()> {
     let db = Arc::new(db);
 
     // Initialize keys
-    Transaction::new(&db)
-        .execute(|ctx| {
-            for i in 0..10 {
-                let key = format!("key-{}", i);
-                ctx.set(key.as_bytes(), &TypedValue::I64(i))?;
-            }
-            Ok(())
-        })?;
+    Transaction::new(&db).execute(|ctx| {
+        for i in 0..10 {
+            let key = format!("key-{}", i);
+            ctx.set(key.as_bytes(), &TypedValue::I64(i))?;
+        }
+        Ok(())
+    })?;
 
     // Spawn multiple threads doing concurrent reads
     let mut handles = vec![];
@@ -197,11 +194,10 @@ fn test_preflight_cache_non_existent_keys() -> Result<()> {
     assert!(result.is_ok());
 
     // Now create the key
-    Transaction::new(&db)
-        .execute(|ctx| {
-            ctx.set(b"nonexistent", &TypedValue::I64(42))?;
-            Ok(())
-        })?;
+    Transaction::new(&db).execute(|ctx| {
+        ctx.set(b"nonexistent", &TypedValue::I64(42))?;
+        Ok(())
+    })?;
 
     // Read it - should see the new value (cache invalidated)
     Transaction::new(&db)
@@ -222,11 +218,10 @@ fn test_preflight_cache_disabled() -> Result<()> {
     let (db, _temp) = create_test_db_with_cache(false);
 
     // Initialize a key
-    Transaction::new(&db)
-        .execute(|ctx| {
-            ctx.set(b"value", &TypedValue::I64(100))?;
-            Ok(())
-        })?;
+    Transaction::new(&db).execute(|ctx| {
+        ctx.set(b"value", &TypedValue::I64(100))?;
+        Ok(())
+    })?;
 
     // Read it multiple times
     for _ in 0..10 {
@@ -253,11 +248,10 @@ fn test_preflight_cache_exists_method() -> Result<()> {
     let (db, _temp) = create_test_db_with_cache(true);
 
     // Initialize a key
-    Transaction::new(&db)
-        .execute(|ctx| {
-            ctx.set(b"exists_key", &TypedValue::I64(123))?;
-            Ok(())
-        })?;
+    Transaction::new(&db).execute(|ctx| {
+        ctx.set(b"exists_key", &TypedValue::I64(123))?;
+        Ok(())
+    })?;
 
     // Check existence (should cache the result)
     Transaction::new(&db)

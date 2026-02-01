@@ -99,7 +99,11 @@ fn benchmark_cold_keys(db: &AzothDb, iterations: usize) -> std::time::Duration {
     start.elapsed()
 }
 
-fn benchmark_concurrent_hot_keys(db: Arc<AzothDb>, num_threads: usize, iterations_per_thread: usize) -> std::time::Duration {
+fn benchmark_concurrent_hot_keys(
+    db: Arc<AzothDb>,
+    num_threads: usize,
+    iterations_per_thread: usize,
+) -> std::time::Duration {
     // Initialize hot keys
     Transaction::new(&db)
         .execute(|ctx| {
@@ -258,8 +262,11 @@ fn main() {
         temp_dir_concurrent_enabled.path(),
         true,
     ));
-    let duration_concurrent_enabled =
-        benchmark_concurrent_hot_keys(db_concurrent_enabled.clone(), num_threads, iterations_per_thread);
+    let duration_concurrent_enabled = benchmark_concurrent_hot_keys(
+        db_concurrent_enabled.clone(),
+        num_threads,
+        iterations_per_thread,
+    );
     let total_ops = num_threads * iterations_per_thread;
     let tps_concurrent_enabled = total_ops as f64 / duration_concurrent_enabled.as_secs_f64();
     println!(
@@ -279,8 +286,11 @@ fn main() {
         temp_dir_concurrent_disabled.path(),
         false,
     ));
-    let duration_concurrent_disabled =
-        benchmark_concurrent_hot_keys(db_concurrent_disabled.clone(), num_threads, iterations_per_thread);
+    let duration_concurrent_disabled = benchmark_concurrent_hot_keys(
+        db_concurrent_disabled.clone(),
+        num_threads,
+        iterations_per_thread,
+    );
     let tps_concurrent_disabled = total_ops as f64 / duration_concurrent_disabled.as_secs_f64();
     println!(
         "   {} reads ({} threads × {} iterations) in {:?}",
@@ -292,7 +302,8 @@ fn main() {
         db_concurrent_disabled.canonical().preflight_cache().stats()
     );
 
-    let improvement_concurrent = ((tps_concurrent_enabled - tps_concurrent_disabled) / tps_concurrent_disabled) * 100.0;
+    let improvement_concurrent =
+        ((tps_concurrent_enabled - tps_concurrent_disabled) / tps_concurrent_disabled) * 100.0;
     println!(
         "   → Cache improvement: {:.1}% ({:.2}x faster)\n",
         improvement_concurrent,
