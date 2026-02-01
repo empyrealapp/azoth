@@ -61,7 +61,7 @@ fn main() -> Result<()> {
                     })
                     .execute(|ctx| {
                         // Fast commit (FIFO queue, but preflights ran in parallel)
-                        let balance = ctx.get(key.as_bytes())?.as_u256()?;
+                        let _balance = ctx.get(key.as_bytes())?.as_u256()?;
                         ctx.set(key.as_bytes(), &TypedValue::U256(U256::from(900u64)))?;
                         ctx.log(
                             "withdraw",
@@ -113,7 +113,7 @@ fn main() -> Result<()> {
                         Ok(())
                     })
                     .execute(|ctx| {
-                        let balance = ctx.get(b"account_0")?.as_u256()?;
+                        let _balance = ctx.get(b"account_0")?.as_u256()?;
                         // Simplified decrement
                         ctx.set(b"account_0", &TypedValue::U256(U256::from(900u64)))?;
                         ctx.log(

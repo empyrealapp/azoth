@@ -5,8 +5,11 @@ use azoth_core::{
     types::{CommitInfo, EventId},
 };
 use azoth_file_log::FileEventLog;
-use lmdb::{Database, RwTransaction, Transaction, WriteFlags};
-use std::sync::Arc;
+use lmdb::{Database, RoTransaction, RwTransaction, Transaction, WriteFlags};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Weak,
+};
 
 use crate::keys::meta_keys;
 
@@ -17,12 +20,12 @@ use crate::keys::meta_keys;
 pub struct LmdbWriteTxn<'a> {
     txn: Option<RwTransaction<'a>>,
     state_db: Database,
-    #[allow(dead_code)]
-    events_db: Database, // Deprecated: kept for backward compatibility
     meta_db: Database,
-    event_log: Arc<FileEventLog>, // NEW: File-based event storage
-    pending_events: Vec<Vec<u8>>, // NEW: Events to write on commit
+    event_log: Arc<FileEventLog>,
+    pending_events: Vec<Vec<u8>>,
     stats: TxnStats,
+    txn_counter: Weak<AtomicUsize>,
+    counter_decremented: bool,
 }
 
 /// Transaction statistics
@@ -34,18 +37,40 @@ struct TxnStats {
     last_event_id: Option<EventId>,
 }
 
+/// Read-only transaction for LMDB canonical store
+///
+/// Enables concurrent reads without blocking writes or other reads.
+pub struct LmdbReadTxn<'a> {
+    txn: RoTransaction<'a>,
+    state_db: Database,
+}
+
+impl<'a> LmdbReadTxn<'a> {
+    pub fn new(txn: RoTransaction<'a>, state_db: Database) -> Self {
+        Self { txn, state_db }
+    }
+
+    /// Get state value by key
+    pub fn get_state(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        match self.txn.get(self.state_db, &key) {
+            Ok(bytes) => Ok(Some(bytes.to_vec())),
+            Err(lmdb::Error::NotFound) => Ok(None),
+            Err(e) => Err(AzothError::Transaction(e.to_string())),
+        }
+    }
+}
+
 impl<'a> LmdbWriteTxn<'a> {
     pub fn new(
         txn: RwTransaction<'a>,
         state_db: Database,
-        events_db: Database,
         meta_db: Database,
         event_log: Arc<FileEventLog>,
+        txn_counter: Weak<AtomicUsize>,
     ) -> Self {
         Self {
             txn: Some(txn),
             state_db,
-            events_db,
             meta_db,
             event_log,
             pending_events: Vec::new(),
@@ -56,6 +81,18 @@ impl<'a> LmdbWriteTxn<'a> {
                 first_event_id: None,
                 last_event_id: None,
             },
+            txn_counter,
+            counter_decremented: false,
+        }
+    }
+
+    /// Decrement transaction counter (call only once per transaction)
+    fn decrement_counter(&mut self) {
+        if !self.counter_decremented {
+            if let Some(counter) = self.txn_counter.upgrade() {
+                counter.fetch_sub(1, Ordering::SeqCst);
+            }
+            self.counter_decremented = true;
         }
     }
 
@@ -215,6 +252,9 @@ impl<'a> CanonicalTxn for LmdbWriteTxn<'a> {
                 .append_batch_with_ids(first_event_id, &self.pending_events)?;
         }
 
+        // Decrement transaction counter (transaction complete)
+        self.decrement_counter();
+
         Ok(CommitInfo {
             events_written: self.stats.events_written,
             first_event_id: self.stats.first_event_id,
@@ -228,6 +268,8 @@ impl<'a> CanonicalTxn for LmdbWriteTxn<'a> {
         if let Some(txn) = self.txn.take() {
             txn.abort();
         }
+        // Decrement transaction counter (transaction aborted)
+        self.decrement_counter();
     }
 }
 
@@ -236,5 +278,7 @@ impl<'a> Drop for LmdbWriteTxn<'a> {
         if let Some(txn) = self.txn.take() {
             txn.abort();
         }
+        // Decrement transaction counter (transaction dropped without commit/abort)
+        self.decrement_counter();
     }
 }

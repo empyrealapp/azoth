@@ -17,4 +17,4 @@ pub mod store;
 pub mod txn;
 
 pub use store::LmdbCanonicalStore;
-pub use txn::LmdbWriteTxn;
+pub use txn::{LmdbReadTxn, LmdbWriteTxn};

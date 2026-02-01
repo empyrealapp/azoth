@@ -111,7 +111,7 @@ fn main() {
     // Benchmark 7: Event iteration
     println!("7. Event Iteration Performance");
     let meta = db.canonical().meta().unwrap();
-    let event_count = meta.next_event_id;
+    let _event_count = meta.next_event_id;
     let start = Instant::now();
     let mut iter = db.canonical().iter_events(0, None).unwrap();
     let mut count = 0;
