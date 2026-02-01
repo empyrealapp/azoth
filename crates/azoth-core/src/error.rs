@@ -27,6 +27,9 @@ pub enum AzothError {
     #[error("Restore error: {0}")]
     Restore(String),
 
+    #[error("Encryption error: {0}")]
+    Encryption(String),
+
     #[error("Projection error: {0}")]
     Projection(String),
 
@@ -44,6 +47,12 @@ pub enum AzothError {
 
     #[error("Invalid state: {0}")]
     InvalidState(String),
+
+    #[error("Timeout: {0}")]
+    Timeout(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 
     #[error("Other error: {0}")]
     Other(#[from] anyhow::Error),
