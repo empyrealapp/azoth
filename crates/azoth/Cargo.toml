@@ -44,3 +44,7 @@ harness = false
 [[bench]]
 name = "basic_benchmark"
 harness = false
+
+[[bench]]
+name = "preflight_cache_benchmark"
+harness = false
