@@ -25,6 +25,40 @@ pub struct CanonicalConfig {
     /// Default: 126
     #[serde(default = "default_max_readers")]
     pub max_readers: u32,
+
+    /// Use read-only transactions for preflight (default: true)
+    ///
+    /// When enabled, preflight validation uses concurrent read-only transactions
+    /// instead of write transactions, improving throughput and reducing contention.
+    #[serde(default = "default_true")]
+    pub preflight_read_only: bool,
+
+    /// Chunk size for state iteration (default: 1000)
+    ///
+    /// State iterators fetch data in chunks to maintain constant memory usage.
+    /// Larger chunks improve throughput but use more memory temporarily.
+    #[serde(default = "default_chunk_size")]
+    pub state_iter_chunk_size: usize,
+
+    /// Enable in-memory cache for preflight validation (default: true)
+    ///
+    /// When enabled, frequently accessed state keys are cached in memory during
+    /// preflight validation, reducing LMDB reads for hot keys.
+    #[serde(default = "default_true")]
+    pub preflight_cache_enabled: bool,
+
+    /// Maximum number of entries in the preflight cache (default: 10,000)
+    ///
+    /// Each entry uses approximately 120 bytes + value size.
+    /// Default of 10,000 entries ≈ 1-6 MB memory overhead.
+    #[serde(default = "default_preflight_cache_size")]
+    pub preflight_cache_size: usize,
+
+    /// Time-to-live for preflight cache entries in seconds (default: 60)
+    ///
+    /// Entries older than this will be evicted on access.
+    #[serde(default = "default_preflight_cache_ttl")]
+    pub preflight_cache_ttl_secs: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -50,6 +84,22 @@ fn default_max_readers() -> u32 {
     126
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_chunk_size() -> usize {
+    1000
+}
+
+fn default_preflight_cache_size() -> usize {
+    10_000
+}
+
+fn default_preflight_cache_ttl() -> u64 {
+    60
+}
+
 impl CanonicalConfig {
     pub fn new(path: PathBuf) -> Self {
         Self {
@@ -58,6 +108,11 @@ impl CanonicalConfig {
             sync_mode: SyncMode::default(),
             stripe_count: default_stripe_count(),
             max_readers: default_max_readers(),
+            preflight_read_only: default_true(),
+            state_iter_chunk_size: default_chunk_size(),
+            preflight_cache_enabled: default_true(),
+            preflight_cache_size: default_preflight_cache_size(),
+            preflight_cache_ttl_secs: default_preflight_cache_ttl(),
         }
     }
 
@@ -73,6 +128,21 @@ impl CanonicalConfig {
 
     pub fn with_stripe_count(mut self, stripe_count: usize) -> Self {
         self.stripe_count = stripe_count;
+        self
+    }
+
+    pub fn with_preflight_cache(mut self, enabled: bool) -> Self {
+        self.preflight_cache_enabled = enabled;
+        self
+    }
+
+    pub fn with_preflight_cache_size(mut self, size: usize) -> Self {
+        self.preflight_cache_size = size;
+        self
+    }
+
+    pub fn with_preflight_cache_ttl(mut self, ttl_secs: u64) -> Self {
+        self.preflight_cache_ttl_secs = ttl_secs;
         self
     }
 }

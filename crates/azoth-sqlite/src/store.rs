@@ -78,6 +78,144 @@ impl SqliteProjectionStore {
 
         Ok(())
     }
+
+    /// Execute a read-only SQL query asynchronously
+    ///
+    /// This method runs the query on a separate thread to avoid blocking,
+    /// making it safe to call from async contexts.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let balance: i64 = store.query_async(|conn| {
+    ///     conn.query_row("SELECT balance FROM accounts WHERE id = ?1", [account_id], |row| row.get(0))
+    /// }).await?;
+    /// ```
+    pub async fn query_async<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn_guard = conn.lock().unwrap();
+            f(&conn_guard)
+        })
+        .await
+        .map_err(|e| AzothError::Projection(format!("Query task failed: {}", e)))?
+    }
+
+    /// Execute a read-only SQL query synchronously
+    ///
+    /// This is a convenience method for non-async contexts.
+    /// For async contexts, prefer `query_async`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let balance: i64 = store.query(|conn| {
+    ///     conn.query_row("SELECT balance FROM accounts WHERE id = ?1", [account_id], |row| row.get(0))
+    /// })?;
+    /// ```
+    pub fn query<F, R>(&self, f: F) -> Result<R>
+    where
+        F: FnOnce(&Connection) -> Result<R>,
+    {
+        let conn_guard = self.conn.lock().unwrap();
+        f(&conn_guard)
+    }
+
+    /// Execute arbitrary SQL statements (DDL/DML) asynchronously
+    ///
+    /// Useful for creating tables, indexes, or performing bulk updates.
+    ///
+    /// # Example
+    /// ```ignore
+    /// store.execute_async(|conn| {
+    ///     conn.execute("CREATE TABLE IF NOT EXISTS balances (id INTEGER PRIMARY KEY, amount INTEGER)", [])?;
+    ///     conn.execute("CREATE INDEX IF NOT EXISTS idx_amount ON balances(amount)", [])?;
+    ///     Ok(())
+    /// }).await?;
+    /// ```
+    pub async fn execute_async<F>(&self, f: F) -> Result<()>
+    where
+        F: FnOnce(&Connection) -> Result<()> + Send + 'static,
+    {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let conn_guard = conn.lock().unwrap();
+            f(&conn_guard)
+        })
+        .await
+        .map_err(|e| AzothError::Projection(format!("Execute task failed: {}", e)))?
+    }
+
+    /// Execute arbitrary SQL statements (DDL/DML) synchronously
+    ///
+    /// # Example
+    /// ```ignore
+    /// store.execute(|conn| {
+    ///     conn.execute("CREATE TABLE IF NOT EXISTS balances (id INTEGER PRIMARY KEY, amount INTEGER)", [])?;
+    ///     Ok(())
+    /// })?;
+    /// ```
+    pub fn execute<F>(&self, f: F) -> Result<()>
+    where
+        F: FnOnce(&Connection) -> Result<()>,
+    {
+        let conn_guard = self.conn.lock().unwrap();
+        f(&conn_guard)
+    }
+
+    /// Execute a transaction with multiple SQL statements
+    ///
+    /// The closure receives a transaction object and can execute multiple
+    /// statements atomically. If the closure returns an error, the transaction
+    /// is rolled back.
+    ///
+    /// # Example
+    /// ```ignore
+    /// store.transaction(|tx| {
+    ///     tx.execute("INSERT INTO accounts (id, balance) VALUES (?1, ?2)", params![1, 100])?;
+    ///     tx.execute("INSERT INTO accounts (id, balance) VALUES (?1, ?2)", params![2, 200])?;
+    ///     Ok(())
+    /// })?;
+    /// ```
+    pub fn transaction<F>(&self, f: F) -> Result<()>
+    where
+        F: FnOnce(&rusqlite::Transaction) -> Result<()>,
+    {
+        let mut conn_guard = self.conn.lock().unwrap();
+        let tx = conn_guard
+            .transaction()
+            .map_err(|e| AzothError::Projection(e.to_string()))?;
+
+        f(&tx)?;
+
+        tx.commit()
+            .map_err(|e| AzothError::Projection(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Execute a transaction asynchronously
+    pub async fn transaction_async<F>(&self, f: F) -> Result<()>
+    where
+        F: FnOnce(&rusqlite::Transaction) -> Result<()> + Send + 'static,
+    {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn_guard = conn.lock().unwrap();
+            let tx = conn_guard
+                .transaction()
+                .map_err(|e| AzothError::Projection(e.to_string()))?;
+
+            f(&tx)?;
+
+            tx.commit()
+                .map_err(|e| AzothError::Projection(e.to_string()))?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| AzothError::Projection(format!("Transaction task failed: {}", e)))?
+    }
 }
 
 impl ProjectionStore for SqliteProjectionStore {

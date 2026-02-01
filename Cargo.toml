@@ -7,6 +7,7 @@ members = [
     "crates/azoth-file-log",
     "crates/azoth-projector",
     "crates/azoth",
+    "crates/azoth-scheduler",
 ]
 
 [workspace.package]
@@ -44,6 +45,7 @@ toml = "0.8"
 # Async runtime for stripe locking
 tokio = { version = "1.0", features = ["rt", "sync", "macros"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+dashmap = "6.0"
 
 # LMDB
 lmdb = "0.8"
@@ -62,6 +64,10 @@ rmp-serde = "1.3"  # MessagePack support
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 
+# Scheduler
+cron = "0.12"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
 # Dev/test dependencies
 tempfile = "3.0"
 proptest = "1.0"
@@ -73,3 +79,5 @@ azoth-lmdb = { version = "0.1.0", path = "crates/azoth-lmdb" }
 azoth-sqlite = { version = "0.1.0", path = "crates/azoth-sqlite" }
 azoth-file-log = { version = "0.1.0", path = "crates/azoth-file-log" }
 azoth-projector = { version = "0.1.0", path = "crates/azoth-projector" }
+azoth-scheduler = { version = "0.1.0", path = "crates/azoth-scheduler" }
+azoth = { version = "0.1.0", path = "crates/azoth" }
