@@ -194,7 +194,8 @@ impl<'a> CanonicalTxn for LmdbWriteTxn<'a> {
             .ok_or_else(|| AzothError::InvalidState("Transaction already committed".into()))?;
 
         let mut results = Vec::new();
-        let mut cursor = txn.open_ro_cursor(self.state_db)
+        let mut cursor = txn
+            .open_ro_cursor(self.state_db)
             .map_err(|e| AzothError::Transaction(e.to_string()))?;
 
         for (key, value) in cursor.iter() {
