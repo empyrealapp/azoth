@@ -12,6 +12,7 @@
 pub mod backup;
 pub mod iter;
 pub mod keys;
+pub mod preflight_cache;
 pub mod state_iter;
 pub mod store;
 pub mod txn;

@@ -12,6 +12,7 @@ use std::sync::{
 };
 
 use crate::keys::meta_keys;
+use crate::preflight_cache::PreflightCache;
 
 /// Write transaction for LMDB canonical store
 ///
@@ -26,6 +27,8 @@ pub struct LmdbWriteTxn<'a> {
     stats: TxnStats,
     txn_counter: Weak<AtomicUsize>,
     counter_decremented: bool,
+    modified_keys: Vec<Vec<u8>>,
+    preflight_cache: Arc<PreflightCache>,
 }
 
 /// Transaction statistics
@@ -67,6 +70,7 @@ impl<'a> LmdbWriteTxn<'a> {
         meta_db: Database,
         event_log: Arc<FileEventLog>,
         txn_counter: Weak<AtomicUsize>,
+        preflight_cache: Arc<PreflightCache>,
     ) -> Self {
         Self {
             txn: Some(txn),
@@ -83,6 +87,8 @@ impl<'a> LmdbWriteTxn<'a> {
             },
             txn_counter,
             counter_decremented: false,
+            modified_keys: Vec::new(),
+            preflight_cache,
         }
     }
 
@@ -160,6 +166,7 @@ impl<'a> CanonicalTxn for LmdbWriteTxn<'a> {
             .map_err(|e| AzothError::Transaction(e.to_string()))?;
 
         self.stats.state_keys_written += 1;
+        self.modified_keys.push(key.to_vec());
         Ok(())
     }
 
@@ -172,6 +179,7 @@ impl<'a> CanonicalTxn for LmdbWriteTxn<'a> {
         match txn.del(self.state_db, &key, None) {
             Ok(()) => {
                 self.stats.state_keys_deleted += 1;
+                self.modified_keys.push(key.to_vec());
                 Ok(())
             }
             Err(lmdb::Error::NotFound) => Ok(()), // Idempotent
@@ -251,6 +259,9 @@ impl<'a> CanonicalTxn for LmdbWriteTxn<'a> {
             self.event_log
                 .append_batch_with_ids(first_event_id, &self.pending_events)?;
         }
+
+        // Phase 3: Invalidate preflight cache for modified keys
+        self.preflight_cache.invalidate_keys(&self.modified_keys);
 
         // Decrement transaction counter (transaction complete)
         self.decrement_counter();

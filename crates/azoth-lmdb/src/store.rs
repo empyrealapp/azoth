@@ -15,6 +15,7 @@ use std::sync::{
 };
 
 use crate::keys::meta_keys;
+use crate::preflight_cache::PreflightCache;
 use crate::txn::LmdbWriteTxn;
 
 /// Adapter to convert EventLogIterator to EventIter
@@ -46,6 +47,7 @@ pub struct LmdbCanonicalStore {
     paused: Arc<AtomicBool>,
     chunk_size: usize,
     txn_counter: Arc<AtomicUsize>,
+    preflight_cache: Arc<PreflightCache>,
 }
 
 impl LmdbCanonicalStore {
@@ -143,6 +145,13 @@ impl CanonicalStore for LmdbCanonicalStore {
         let env = Arc::new(env);
         let lock_manager = Arc::new(LockManager::new(cfg.stripe_count));
 
+        // Initialize preflight cache
+        let preflight_cache = Arc::new(PreflightCache::new(
+            cfg.preflight_cache_size,
+            cfg.preflight_cache_ttl_secs,
+            cfg.preflight_cache_enabled,
+        ));
+
         // Initialize file-based event log
         let event_log_config = FileEventLogConfig {
             base_dir: cfg.path.join("event-log"),
@@ -202,6 +211,7 @@ impl CanonicalStore for LmdbCanonicalStore {
             paused: Arc::new(AtomicBool::new(false)),
             chunk_size: cfg.state_iter_chunk_size,
             txn_counter: Arc::new(AtomicUsize::new(0)),
+            preflight_cache,
         })
     }
 
@@ -249,6 +259,7 @@ impl CanonicalStore for LmdbCanonicalStore {
             self.meta_db,
             self.event_log.clone(),
             Arc::downgrade(&self.txn_counter),
+            self.preflight_cache.clone(),
         ))
     }
 
@@ -475,5 +486,12 @@ impl LmdbCanonicalStore {
     /// This allows direct access to event storage for advanced use cases.
     pub fn event_log(&self) -> &Arc<FileEventLog> {
         &self.event_log
+    }
+
+    /// Get reference to the preflight cache
+    ///
+    /// This allows access to cache statistics and manual cache operations.
+    pub fn preflight_cache(&self) -> &Arc<PreflightCache> {
+        &self.preflight_cache
     }
 }

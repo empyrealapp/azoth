@@ -40,41 +40,102 @@
 use crate::{
     AzothDb, AzothError, CanonicalStore, CanonicalTxn, CommitInfo, EventId, Result, TypedValue,
 };
+use azoth_lmdb::preflight_cache::{CachedValue, PreflightCache};
+use std::sync::Arc;
 
 /// Preflight context for validation
 ///
 /// Provides read-only access to state during preflight phase
 pub struct PreflightContext<'a> {
     db: &'a AzothDb,
+    cache: &'a Arc<PreflightCache>,
 }
 
 impl<'a> PreflightContext<'a> {
-    fn new(db: &'a AzothDb) -> Self {
-        Self { db }
+    fn new(db: &'a AzothDb, cache: &'a Arc<PreflightCache>) -> Self {
+        Self { db, cache }
     }
 
     /// Get a typed value from state
     pub fn get(&self, key: &[u8]) -> Result<TypedValue> {
+        // Check cache first
+        if let Some(cached) = self.cache.get(key) {
+            match cached {
+                CachedValue::Some(bytes) => return TypedValue::from_bytes(&bytes),
+                CachedValue::None => {
+                    return Err(AzothError::InvalidState("Key does not exist".into()))
+                }
+            }
+        }
+
+        // Cache miss - read from LMDB
         let txn = self.db.canonical().read_only_txn()?;
         match txn.get_state(key)? {
-            Some(bytes) => TypedValue::from_bytes(&bytes),
-            None => Err(AzothError::InvalidState("Key does not exist".into())),
+            Some(bytes) => {
+                // Cache the raw bytes
+                self.cache
+                    .insert(key.to_vec(), CachedValue::Some(bytes.clone()));
+                TypedValue::from_bytes(&bytes)
+            }
+            None => {
+                // Cache the non-existent key
+                self.cache.insert(key.to_vec(), CachedValue::None);
+                Err(AzothError::InvalidState("Key does not exist".into()))
+            }
         }
     }
 
     /// Get a typed value, returning None if key doesn't exist
     pub fn get_opt(&self, key: &[u8]) -> Result<Option<TypedValue>> {
+        // Check cache first
+        if let Some(cached) = self.cache.get(key) {
+            match cached {
+                CachedValue::Some(bytes) => return Ok(Some(TypedValue::from_bytes(&bytes)?)),
+                CachedValue::None => return Ok(None),
+            }
+        }
+
+        // Cache miss - read from LMDB
         let txn = self.db.canonical().read_only_txn()?;
         match txn.get_state(key)? {
-            Some(bytes) => Ok(Some(TypedValue::from_bytes(&bytes)?)),
-            None => Ok(None),
+            Some(bytes) => {
+                // Cache the raw bytes
+                self.cache
+                    .insert(key.to_vec(), CachedValue::Some(bytes.clone()));
+                Ok(Some(TypedValue::from_bytes(&bytes)?))
+            }
+            None => {
+                // Cache the non-existent key
+                self.cache.insert(key.to_vec(), CachedValue::None);
+                Ok(None)
+            }
         }
     }
 
     /// Check if key exists
     pub fn exists(&self, key: &[u8]) -> Result<bool> {
+        // Check cache first
+        if let Some(cached) = self.cache.get(key) {
+            match cached {
+                CachedValue::Some(_) => return Ok(true),
+                CachedValue::None => return Ok(false),
+            }
+        }
+
+        // Cache miss - read from LMDB
         let txn = self.db.canonical().read_only_txn()?;
-        Ok(txn.get_state(key)?.is_some())
+        match txn.get_state(key)? {
+            Some(bytes) => {
+                // Cache the value
+                self.cache.insert(key.to_vec(), CachedValue::Some(bytes));
+                Ok(true)
+            }
+            None => {
+                // Cache the non-existent key
+                self.cache.insert(key.to_vec(), CachedValue::None);
+                Ok(false)
+            }
+        }
     }
 }
 
@@ -369,7 +430,8 @@ impl<'a> Transaction<'a> {
             .collect();
 
         // Phase 2: Preflight validation (with locks held!)
-        let ctx = PreflightContext::new(self.db);
+        let cache = self.db.canonical().preflight_cache();
+        let ctx = PreflightContext::new(self.db, cache);
         for validator in self.validators {
             validator(&ctx)?;
         }
@@ -383,9 +445,13 @@ impl<'a> Transaction<'a> {
 
         f(&mut update_ctx)?;
 
+        // Commit and invalidate cache for modified keys
+        let commit_info = update_ctx.txn.commit()?;
+        cache.invalidate_keys(&self.write_keys);
+
         // Phase 5: Locks released here via RAII when _read_locks and _write_locks go out of scope
 
-        update_ctx.txn.commit()
+        Ok(commit_info)
     }
 }
 
