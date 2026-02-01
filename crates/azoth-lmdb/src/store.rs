@@ -45,7 +45,7 @@ pub struct LmdbCanonicalStore {
     lock_manager: Arc<LockManager>,
     write_lock: Arc<Mutex<()>>, // Only for pause_ingestion
     paused: Arc<AtomicBool>,
-    chunk_size: usize, // Chunk size for state iterators
+    chunk_size: usize,             // Chunk size for state iterators
     txn_counter: Arc<AtomicUsize>, // Track active transactions for pause_ingestion
 }
 
@@ -233,13 +233,10 @@ impl CanonicalStore for LmdbCanonicalStore {
         }
 
         // Check if sealed
-        let ro_txn = self
-            .env
-            .begin_ro_txn()
-            .map_err(|e| {
-                self.txn_counter.fetch_sub(1, Ordering::SeqCst);
-                AzothError::Transaction(e.to_string())
-            })?;
+        let ro_txn = self.env.begin_ro_txn().map_err(|e| {
+            self.txn_counter.fetch_sub(1, Ordering::SeqCst);
+            AzothError::Transaction(e.to_string())
+        })?;
         if let Some(sealed_id) = self.get_sealed_event_id(&ro_txn)? {
             self.txn_counter.fetch_sub(1, Ordering::SeqCst);
             return Err(AzothError::Sealed(sealed_id));
@@ -247,13 +244,10 @@ impl CanonicalStore for LmdbCanonicalStore {
         drop(ro_txn); // Release read transaction
 
         // Let LMDB handle write serialization (no lock needed)
-        let txn = self
-            .env
-            .begin_rw_txn()
-            .map_err(|e| {
-                self.txn_counter.fetch_sub(1, Ordering::SeqCst);
-                AzothError::Transaction(e.to_string())
-            })?;
+        let txn = self.env.begin_rw_txn().map_err(|e| {
+            self.txn_counter.fetch_sub(1, Ordering::SeqCst);
+            AzothError::Transaction(e.to_string())
+        })?;
 
         Ok(LmdbWriteTxn::new(
             txn,
@@ -469,12 +463,8 @@ impl LmdbCanonicalStore {
         let chunk_size = self.chunk_size;
 
         tokio::task::spawn_blocking(move || {
-            let mut iter = crate::state_iter::LmdbStateIter::with_prefix(
-                env,
-                state_db,
-                &prefix,
-                chunk_size,
-            )?;
+            let mut iter =
+                crate::state_iter::LmdbStateIter::with_prefix(env, state_db, &prefix, chunk_size)?;
 
             let mut results = Vec::new();
             loop {

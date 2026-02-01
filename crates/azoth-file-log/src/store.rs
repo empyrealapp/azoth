@@ -32,9 +32,9 @@ impl Default for FileEventLogConfig {
     fn default() -> Self {
         Self {
             base_dir: PathBuf::from("./data/event-log"),
-            max_file_size: 512 * 1024 * 1024,   // 512MB
-            write_buffer_size: 256 * 1024,      // 256KB (increased from 64KB)
-            batch_buffer_size: 1024 * 1024,     // 1MB for batch writes
+            max_file_size: 512 * 1024 * 1024, // 512MB
+            write_buffer_size: 256 * 1024,    // 256KB (increased from 64KB)
+            batch_buffer_size: 1024 * 1024,   // 1MB for batch writes
         }
     }
 }

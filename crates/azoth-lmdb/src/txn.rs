@@ -6,7 +6,10 @@ use azoth_core::{
 };
 use azoth_file_log::FileEventLog;
 use lmdb::{Database, RoTransaction, RwTransaction, Transaction, WriteFlags};
-use std::sync::{atomic::{AtomicUsize, Ordering}, Arc, Weak};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc, Weak,
+};
 
 use crate::keys::meta_keys;
 
@@ -24,7 +27,7 @@ pub struct LmdbWriteTxn<'a> {
     pending_events: Vec<Vec<u8>>, // NEW: Events to write on commit
     stats: TxnStats,
     txn_counter: Weak<AtomicUsize>, // Track transaction completion
-    counter_decremented: bool, // Track if counter was already decremented
+    counter_decremented: bool,      // Track if counter was already decremented
 }
 
 /// Transaction statistics

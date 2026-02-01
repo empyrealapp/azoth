@@ -9,12 +9,12 @@ use std::sync::Arc;
 pub struct LmdbStateIter {
     env: Arc<Environment>,
     db: Database,
-    current_key: Vec<u8>,           // Resume point for next chunk
-    end_key: Option<Vec<u8>>,       // Upper bound (exclusive)
-    chunk_size: usize,              // Items per chunk
+    current_key: Vec<u8>,                   // Resume point for next chunk
+    end_key: Option<Vec<u8>>,               // Upper bound (exclusive)
+    chunk_size: usize,                      // Items per chunk
     current_chunk: Vec<(Vec<u8>, Vec<u8>)>, // Current chunk data
-    chunk_index: usize,             // Position within current chunk
-    finished: bool,                 // No more data to fetch
+    chunk_index: usize,                     // Position within current chunk
+    finished: bool,                         // No more data to fetch
 }
 
 impl LmdbStateIter {
@@ -77,7 +77,8 @@ impl LmdbStateIter {
         }
 
         // Create short-lived read transaction
-        let txn = self.env
+        let txn = self
+            .env
             .begin_ro_txn()
             .map_err(|e| AzothError::Transaction(e.to_string()))?;
 
@@ -105,7 +106,8 @@ impl LmdbStateIter {
                 }
             }
 
-            self.current_chunk.push((key_bytes.to_vec(), value_bytes.to_vec()));
+            self.current_chunk
+                .push((key_bytes.to_vec(), value_bytes.to_vec()));
             count += 1;
 
             if count >= self.chunk_size {
