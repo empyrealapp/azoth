@@ -82,8 +82,6 @@ pub trait CanonicalTxn {
     /// Phase 2: Delete state (fast, single-writer)
     fn del_state(&mut self, key: &[u8]) -> Result<()>;
 
-    /// Phase 2: Iterate over all state entries
-    ///
     /// Returns a vector of (key, value) pairs.
     /// Note: This performs a full scan and should be used sparingly.
     /// Default implementation returns empty vector (not all backends support iteration).
