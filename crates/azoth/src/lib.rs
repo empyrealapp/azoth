@@ -30,11 +30,14 @@
 
 pub mod backup;
 pub mod checkpoint;
+pub mod circuit_breaker;
 pub mod db;
 pub mod dead_letter_queue;
+pub mod dlq_replayer;
 pub mod event_format;
 pub mod event_handler;
 pub mod event_processor;
+pub mod incremental_backup;
 pub mod ipfs;
 pub mod ipfs_storage;
 pub mod migration;
@@ -64,12 +67,22 @@ pub use backup::{BackupOptions, EncryptionKey};
 pub use checkpoint::{
     CheckpointConfig, CheckpointManager, CheckpointMetadata, CheckpointStorage, LocalStorage,
 };
+pub use circuit_breaker::{
+    BreakerMetrics, BreakerMetricsSnapshot, BreakerState, CircuitBreaker, CircuitBreakerConfig,
+};
 pub use db::AzothDb;
 pub use dead_letter_queue::{DeadLetterQueue, FailedEvent};
+pub use dlq_replayer::{
+    BackoffStrategy, DlqMetrics, DlqMetricsSnapshot, DlqReplayConfig, DlqReplayer, ReplayPriority,
+};
 pub use event_format::{Event, EventCodec, EventTypeRegistry, JsonCodec, MsgPackCodec};
 pub use event_handler::{BatchConfig, BatchEvent, EventHandler, EventHandlerRegistry};
 pub use event_processor::{
     ErrorAction, ErrorStrategy, EventProcessor, EventProcessorBuilder, ShutdownHandle,
+};
+pub use incremental_backup::{
+    BackupRetention, BackupType, IncrementalBackup, IncrementalBackupConfig,
+    IncrementalBackupManifest,
 };
 pub use ipfs::{IpfsClient, IpfsProvider};
 pub use ipfs_storage::IpfsStorage;

@@ -51,6 +51,9 @@ pub enum AzothError {
     #[error("Timeout: {0}")]
     Timeout(String),
 
+    #[error("Circuit breaker is open, rejecting request")]
+    CircuitBreakerOpen,
+
     #[error("Internal error: {0}")]
     Internal(String),
 

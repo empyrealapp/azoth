@@ -39,6 +39,11 @@ reqwest = { version = "0.12", features = ["json", "multipart"] }
 async-trait = "0.1"
 tempfile = { workspace = true }
 
+# Incremental backup utilities
+uuid = { workspace = true }
+walkdir = { workspace = true }
+sha2 = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }

@@ -68,6 +68,10 @@ chrono = { version = "0.4", features = ["serde"] }
 cron = "0.12"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
+# Utilities
+walkdir = "2.4"
+sha2 = "0.10"
+
 # Dev/test dependencies
 tempfile = "3.0"
 proptest = "1.0"

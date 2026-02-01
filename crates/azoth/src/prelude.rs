@@ -26,6 +26,17 @@ pub use crate::{LmdbCanonicalStore, Projector, SqliteProjectionStore};
 // Event handling
 pub use crate::{EventHandler, EventHandlerRegistry};
 
+// DLQ and Replay
+pub use crate::{
+    BackoffStrategy, DeadLetterQueue, DlqMetrics, DlqReplayConfig, DlqReplayer, FailedEvent,
+    ReplayPriority,
+};
+
+// Circuit Breaker
+pub use crate::{
+    BreakerMetrics, BreakerMetricsSnapshot, BreakerState, CircuitBreaker, CircuitBreakerConfig,
+};
+
 // Migrations
 pub use crate::{Migration, MigrationManager};
 
@@ -34,6 +45,12 @@ pub use crate::{PreflightContext, Transaction, TransactionContext};
 
 // Backup
 pub use crate::{BackupOptions, EncryptionKey};
+
+// Incremental Backup
+pub use crate::{
+    BackupRetention, BackupType, IncrementalBackup, IncrementalBackupConfig,
+    IncrementalBackupManifest,
+};
 
 // Event format
 pub use crate::{Event, EventCodec, EventTypeRegistry, JsonCodec, MsgPackCodec};

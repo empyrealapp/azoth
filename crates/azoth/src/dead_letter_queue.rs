@@ -19,7 +19,7 @@ pub struct FailedEvent {
 
 /// Dead Letter Queue for storing failed events
 pub struct DeadLetterQueue {
-    conn: Arc<Connection>,
+    pub(crate) conn: Arc<Connection>,
 }
 
 impl DeadLetterQueue {
@@ -28,6 +28,11 @@ impl DeadLetterQueue {
         let dlq = Self { conn };
         dlq.init()?;
         Ok(dlq)
+    }
+
+    /// Get reference to the underlying connection
+    pub fn connection(&self) -> &Arc<Connection> {
+        &self.conn
     }
 
     /// Initialize the DLQ table
