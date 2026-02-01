@@ -45,6 +45,12 @@ pub enum AzothError {
     #[error("Invalid state: {0}")]
     InvalidState(String),
 
+    #[error("Timeout: {0}")]
+    Timeout(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
+
     #[error("Other error: {0}")]
     Other(#[from] anyhow::Error),
 }

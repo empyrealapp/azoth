@@ -1,7 +1,6 @@
 //! Integration tests for axiom database
 
 use azoth::prelude::*;
-use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Helper to create a test database
