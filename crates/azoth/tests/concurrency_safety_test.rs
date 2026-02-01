@@ -51,10 +51,7 @@ fn test_no_lost_updates_same_key() {
                                 _ => 0,
                             };
                             ctx.set(b"counter", &TypedValue::U64(current + 1))?;
-                            ctx.log(
-                                "increment",
-                                &serde_json::json!({"value": current + 1}),
-                            )?;
+                            ctx.log("increment", &serde_json::json!({"value": current + 1}))?;
                             Ok(())
                         })
                         .unwrap();
@@ -77,9 +74,12 @@ fn test_no_lost_updates_same_key() {
 
     let expected = (num_threads * increments_per_thread) as u64;
     assert_eq!(
-        final_value, expected,
+        final_value,
+        expected,
         "Lost updates detected! Expected {}, got {}. This means {} updates were lost.",
-        expected, final_value, expected - final_value
+        expected,
+        final_value,
+        expected - final_value
     );
 
     println!("✅ No lost updates test passed:");
@@ -123,11 +123,18 @@ fn test_stripe_lock_serialization() {
                         (b"account_b", b"account_a")
                     };
 
+                    // IMPORTANT: Sort keys to avoid deadlock
+                    let mut keys = vec![from.to_vec(), to.to_vec()];
+                    keys.sort();
+
                     // Transfer must be atomic (both accounts locked)
                     Transaction::new(&db)
-                        .write_keys(vec![from.to_vec(), to.to_vec()])
+                        .write_keys(keys)
                         .validate(|ctx| {
-                            let from_balance = match ctx.get(from)? { TypedValue::U64(v) => v, _ => 0 };
+                            let from_balance = match ctx.get(from)? {
+                                TypedValue::U64(v) => v,
+                                _ => 0,
+                            };
                             if from_balance < 10 {
                                 return Err(AzothError::PreflightFailed(
                                     "Insufficient balance".into(),
@@ -136,8 +143,14 @@ fn test_stripe_lock_serialization() {
                             Ok(())
                         })
                         .execute(|ctx| {
-                            let from_balance = match ctx.get(from)? { TypedValue::U64(v) => v, _ => 0 };
-                            let to_balance = match ctx.get(to)? { TypedValue::U64(v) => v, _ => 0 };
+                            let from_balance = match ctx.get(from)? {
+                                TypedValue::U64(v) => v,
+                                _ => 0,
+                            };
+                            let to_balance = match ctx.get(to)? {
+                                TypedValue::U64(v) => v,
+                                _ => 0,
+                            };
 
                             ctx.set(from, &TypedValue::U64(from_balance - 10))?;
                             ctx.set(to, &TypedValue::U64(to_balance + 10))?;
@@ -178,7 +191,8 @@ fn test_stripe_lock_serialization() {
 
     let total = balance_a + balance_b;
     assert_eq!(
-        total, 2000,
+        total,
+        2000,
         "Total balance should be conserved! Got {}, expected 2000. Money was {} {}",
         total,
         if total > 2000 { "created" } else { "destroyed" },
@@ -386,9 +400,13 @@ fn test_concurrent_consistency_stress() {
                     let key1 = format!("account_{}", acc1);
                     let key2 = format!("account_{}", acc2);
 
+                    // IMPORTANT: Sort keys to avoid deadlock
+                    let mut keys = vec![key1.as_bytes().to_vec(), key2.as_bytes().to_vec()];
+                    keys.sort();
+
                     // Transfer 1 from acc1 to acc2
                     let result = Transaction::new(&db)
-                        .write_keys(vec![key1.as_bytes().to_vec(), key2.as_bytes().to_vec()])
+                        .write_keys(keys)
                         .validate(|ctx| {
                             let balance = match ctx.get(key1.as_bytes())? {
                                 TypedValue::U64(v) => v,
