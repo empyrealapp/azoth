@@ -3,8 +3,9 @@
 //! Supports:
 //! - Integer types (i8, i16, i32, i64, i128, u8, u16, u32, u64, u128, u256)
 //! - Raw bytes
-//! - Sets (with membership testing, add/remove)
-//! - Arrays (with push/pop/insert operations)
+//! - String values
+//! - Typed sets (String, i64, u64, u128, Vec<u8>) with membership testing
+//! - Typed arrays (String, i64, u64, u128, Vec<u8>) with push/pop/insert operations
 //!
 //! # Example
 //!
@@ -20,15 +21,25 @@
 //!     let value = U256::from(1000u64);
 //!     ctx.set(b"balance", &TypedValue::U256(value))?;
 //!
-//!     // Store a Set
+//!     // Store a String Set
 //!     let mut roles = Set::new();
 //!     roles.insert("admin".to_string());
 //!     roles.insert("user".to_string());
 //!     ctx.set(b"roles", &TypedValue::Set(roles))?;
 //!
-//!     // Store an Array
+//!     // Store a typed u64 Set
+//!     let mut user_ids = Set::new();
+//!     user_ids.insert(100u64);
+//!     user_ids.insert(200u64);
+//!     ctx.set(b"user_ids", &TypedValue::SetU64(user_ids))?;
+//!
+//!     // Store a String Array
 //!     let history = Array::from(vec!["event1".to_string(), "event2".to_string()]);
 //!     ctx.set(b"history", &TypedValue::Array(history))?;
+//!
+//!     // Store a typed i64 Array
+//!     let scores = Array::from(vec![-100i64, 0, 100]);
+//!     ctx.set(b"scores", &TypedValue::ArrayI64(scores))?;
 //!
 //!     Ok(())
 //! })?;
@@ -40,7 +51,7 @@ use crate::{AzothError, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// 256-bit unsigned integer (placeholder - use uint::U256 in production)
+/// 256-bit unsigned integer stored as 4 u64 words in little-endian order
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct U256([u64; 4]);
 
@@ -78,15 +89,49 @@ impl U256 {
         Ok(Self(words))
     }
 
-    // Basic arithmetic (placeholder - implement full operations)
-    pub fn checked_add(&self, _other: &Self) -> Option<Self> {
-        // Simplified - real implementation would handle overflow
-        Some(*self)
+    /// Add two U256 values, returning None on overflow
+    #[allow(clippy::needless_range_loop)]
+    pub fn checked_add(&self, other: &Self) -> Option<Self> {
+        let mut result = [0u64; 4];
+        let mut carry = 0u128;
+
+        for i in 0..4 {
+            let sum = self.0[i] as u128 + other.0[i] as u128 + carry;
+            result[i] = sum as u64;
+            carry = sum >> 64;
+        }
+
+        // If there's still a carry after the last word, we overflowed
+        if carry != 0 {
+            None
+        } else {
+            Some(Self(result))
+        }
     }
 
-    pub fn checked_sub(&self, _other: &Self) -> Option<Self> {
-        // Simplified - real implementation would handle underflow
-        Some(*self)
+    /// Subtract two U256 values, returning None on underflow
+    #[allow(clippy::needless_range_loop)]
+    pub fn checked_sub(&self, other: &Self) -> Option<Self> {
+        let mut result = [0u64; 4];
+        let mut borrow = 0i128;
+
+        for i in 0..4 {
+            let diff = self.0[i] as i128 - other.0[i] as i128 - borrow;
+            if diff < 0 {
+                result[i] = (diff + (1i128 << 64)) as u64;
+                borrow = 1;
+            } else {
+                result[i] = diff as u64;
+                borrow = 0;
+            }
+        }
+
+        // If there's still a borrow after the last word, we underflowed
+        if borrow != 0 {
+            None
+        } else {
+            Some(Self(result))
+        }
     }
 }
 
@@ -96,8 +141,12 @@ impl From<u64> for U256 {
     }
 }
 
-/// 256-bit signed integer (placeholder)
-pub type I256 = U256; // Simplified for now
+/// 256-bit signed integer
+///
+/// Note: Currently aliased to U256. This means signed operations are not properly
+/// supported and negative values will be treated as large positive values.
+/// A proper two's complement implementation is needed for production use.
+pub type I256 = U256;
 
 /// Set type with membership operations
 #[derive(Debug, Clone)]
@@ -269,13 +318,21 @@ pub enum TypedValue {
     // String
     String(String),
 
-    // Collections
-    Set(Set<String>), // String set for simplicity
-    Array(Array<String>), // String array for simplicity
+    // Collections - String
+    Set(Set<String>),
+    Array(Array<String>),
 
-                      // TODO: Add typed sets/arrays if needed
-                      // SetU64(Set<u64>),
-                      // ArrayU64(Array<u64>),
+    // Collections - Integer types
+    SetI64(Set<i64>),
+    SetU64(Set<u64>),
+    SetU128(Set<u128>),
+    ArrayI64(Array<i64>),
+    ArrayU64(Array<u64>),
+    ArrayU128(Array<u128>),
+
+    // Collections - Bytes
+    SetBytes(Set<Vec<u8>>),
+    ArrayBytes(Array<Vec<u8>>),
 }
 
 impl TypedValue {
@@ -339,6 +396,134 @@ impl TypedValue {
             _ => Err(AzothError::InvalidState("Not an Array".into())),
         }
     }
+
+    /// Extract as Set<i64>
+    pub fn as_set_i64(&self) -> Result<&Set<i64>> {
+        match self {
+            TypedValue::SetI64(s) => Ok(s),
+            _ => Err(AzothError::InvalidState("Not a Set<i64>".into())),
+        }
+    }
+
+    /// Extract as mutable Set<i64>
+    pub fn as_set_i64_mut(&mut self) -> Result<&mut Set<i64>> {
+        match self {
+            TypedValue::SetI64(s) => Ok(s),
+            _ => Err(AzothError::InvalidState("Not a Set<i64>".into())),
+        }
+    }
+
+    /// Extract as Set<u64>
+    pub fn as_set_u64(&self) -> Result<&Set<u64>> {
+        match self {
+            TypedValue::SetU64(s) => Ok(s),
+            _ => Err(AzothError::InvalidState("Not a Set<u64>".into())),
+        }
+    }
+
+    /// Extract as mutable Set<u64>
+    pub fn as_set_u64_mut(&mut self) -> Result<&mut Set<u64>> {
+        match self {
+            TypedValue::SetU64(s) => Ok(s),
+            _ => Err(AzothError::InvalidState("Not a Set<u64>".into())),
+        }
+    }
+
+    /// Extract as Set<u128>
+    pub fn as_set_u128(&self) -> Result<&Set<u128>> {
+        match self {
+            TypedValue::SetU128(s) => Ok(s),
+            _ => Err(AzothError::InvalidState("Not a Set<u128>".into())),
+        }
+    }
+
+    /// Extract as mutable Set<u128>
+    pub fn as_set_u128_mut(&mut self) -> Result<&mut Set<u128>> {
+        match self {
+            TypedValue::SetU128(s) => Ok(s),
+            _ => Err(AzothError::InvalidState("Not a Set<u128>".into())),
+        }
+    }
+
+    /// Extract as Array<i64>
+    pub fn as_array_i64(&self) -> Result<&Array<i64>> {
+        match self {
+            TypedValue::ArrayI64(a) => Ok(a),
+            _ => Err(AzothError::InvalidState("Not an Array<i64>".into())),
+        }
+    }
+
+    /// Extract as mutable Array<i64>
+    pub fn as_array_i64_mut(&mut self) -> Result<&mut Array<i64>> {
+        match self {
+            TypedValue::ArrayI64(a) => Ok(a),
+            _ => Err(AzothError::InvalidState("Not an Array<i64>".into())),
+        }
+    }
+
+    /// Extract as Array<u64>
+    pub fn as_array_u64(&self) -> Result<&Array<u64>> {
+        match self {
+            TypedValue::ArrayU64(a) => Ok(a),
+            _ => Err(AzothError::InvalidState("Not an Array<u64>".into())),
+        }
+    }
+
+    /// Extract as mutable Array<u64>
+    pub fn as_array_u64_mut(&mut self) -> Result<&mut Array<u64>> {
+        match self {
+            TypedValue::ArrayU64(a) => Ok(a),
+            _ => Err(AzothError::InvalidState("Not an Array<u64>".into())),
+        }
+    }
+
+    /// Extract as Array<u128>
+    pub fn as_array_u128(&self) -> Result<&Array<u128>> {
+        match self {
+            TypedValue::ArrayU128(a) => Ok(a),
+            _ => Err(AzothError::InvalidState("Not an Array<u128>".into())),
+        }
+    }
+
+    /// Extract as mutable Array<u128>
+    pub fn as_array_u128_mut(&mut self) -> Result<&mut Array<u128>> {
+        match self {
+            TypedValue::ArrayU128(a) => Ok(a),
+            _ => Err(AzothError::InvalidState("Not an Array<u128>".into())),
+        }
+    }
+
+    /// Extract as Set<Vec<u8>>
+    pub fn as_set_bytes(&self) -> Result<&Set<Vec<u8>>> {
+        match self {
+            TypedValue::SetBytes(s) => Ok(s),
+            _ => Err(AzothError::InvalidState("Not a Set<Vec<u8>>".into())),
+        }
+    }
+
+    /// Extract as mutable Set<Vec<u8>>
+    pub fn as_set_bytes_mut(&mut self) -> Result<&mut Set<Vec<u8>>> {
+        match self {
+            TypedValue::SetBytes(s) => Ok(s),
+            _ => Err(AzothError::InvalidState("Not a Set<Vec<u8>>".into())),
+        }
+    }
+
+    /// Extract as Array<Vec<u8>>
+    pub fn as_array_bytes(&self) -> Result<&Array<Vec<u8>>> {
+        match self {
+            TypedValue::ArrayBytes(a) => Ok(a),
+            _ => Err(AzothError::InvalidState("Not an Array<Vec<u8>>".into())),
+        }
+    }
+
+    /// Extract as mutable Array<Vec<u8>>
+    pub fn as_array_bytes_mut(&mut self) -> Result<&mut Array<Vec<u8>>> {
+        match self {
+            TypedValue::ArrayBytes(a) => Ok(a),
+            _ => Err(AzothError::InvalidState("Not an Array<Vec<u8>>".into())),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -351,6 +536,52 @@ mod tests {
         let bytes = value.to_bytes();
         let decoded = U256::from_bytes(&bytes).unwrap();
         assert_eq!(value, decoded);
+    }
+
+    #[test]
+    fn test_u256_checked_add() {
+        // Basic addition
+        let a = U256::from_u64(100);
+        let b = U256::from_u64(200);
+        let result = a.checked_add(&b).unwrap();
+        assert_eq!(result, U256::from_u64(300));
+
+        // Addition with carry propagation
+        let a = U256([u64::MAX, 0, 0, 0]);
+        let b = U256([1, 0, 0, 0]);
+        let result = a.checked_add(&b).unwrap();
+        assert_eq!(result, U256([0, 1, 0, 0]));
+
+        // Overflow detection
+        let a = U256([u64::MAX, u64::MAX, u64::MAX, u64::MAX]);
+        let b = U256([1, 0, 0, 0]);
+        assert!(a.checked_add(&b).is_none());
+    }
+
+    #[test]
+    fn test_u256_checked_sub() {
+        // Basic subtraction
+        let a = U256::from_u64(300);
+        let b = U256::from_u64(100);
+        let result = a.checked_sub(&b).unwrap();
+        assert_eq!(result, U256::from_u64(200));
+
+        // Subtraction with borrow propagation
+        let a = U256([0, 1, 0, 0]);
+        let b = U256([1, 0, 0, 0]);
+        let result = a.checked_sub(&b).unwrap();
+        assert_eq!(result, U256([u64::MAX, 0, 0, 0]));
+
+        // Underflow detection
+        let a = U256::from_u64(100);
+        let b = U256::from_u64(200);
+        assert!(a.checked_sub(&b).is_none());
+
+        // Zero result
+        let a = U256::from_u64(100);
+        let b = U256::from_u64(100);
+        let result = a.checked_sub(&b).unwrap();
+        assert_eq!(result, U256::zero());
     }
 
     #[test]
@@ -412,5 +643,88 @@ mod tests {
         let decoded_set = decoded.as_set().unwrap();
         assert_eq!(decoded_set.len(), 2);
         assert!(decoded_set.contains(&"role1".to_string()));
+    }
+
+    #[test]
+    fn test_typed_set_u64() {
+        let mut set = Set::new();
+        set.insert(100u64);
+        set.insert(200u64);
+        set.insert(300u64);
+
+        let value = TypedValue::SetU64(set);
+        let bytes = value.to_bytes().unwrap();
+        let decoded = TypedValue::from_bytes(&bytes).unwrap();
+
+        let decoded_set = decoded.as_set_u64().unwrap();
+        assert_eq!(decoded_set.len(), 3);
+        assert!(decoded_set.contains(&100u64));
+        assert!(decoded_set.contains(&200u64));
+        assert!(!decoded_set.contains(&400u64));
+    }
+
+    #[test]
+    fn test_typed_array_i64() {
+        let mut array = Array::new();
+        array.push(-100i64);
+        array.push(0i64);
+        array.push(100i64);
+
+        let value = TypedValue::ArrayI64(array);
+        let bytes = value.to_bytes().unwrap();
+        let decoded = TypedValue::from_bytes(&bytes).unwrap();
+
+        let decoded_array = decoded.as_array_i64().unwrap();
+        assert_eq!(decoded_array.len(), 3);
+        assert_eq!(decoded_array.get(0), Some(&-100i64));
+        assert_eq!(decoded_array.get(1), Some(&0i64));
+        assert_eq!(decoded_array.get(2), Some(&100i64));
+    }
+
+    #[test]
+    fn test_typed_set_bytes() {
+        let mut set = Set::new();
+        set.insert(vec![1, 2, 3]);
+        set.insert(vec![4, 5, 6]);
+
+        let value = TypedValue::SetBytes(set);
+        let bytes = value.to_bytes().unwrap();
+        let decoded = TypedValue::from_bytes(&bytes).unwrap();
+
+        let decoded_set = decoded.as_set_bytes().unwrap();
+        assert_eq!(decoded_set.len(), 2);
+        assert!(decoded_set.contains(&vec![1, 2, 3]));
+        assert!(decoded_set.contains(&vec![4, 5, 6]));
+    }
+
+    #[test]
+    fn test_typed_array_u128() {
+        let mut array = Array::new();
+        array.push(u128::MAX);
+        array.push(u128::MIN);
+        array.push(12345u128);
+
+        let value = TypedValue::ArrayU128(array);
+        let bytes = value.to_bytes().unwrap();
+        let decoded = TypedValue::from_bytes(&bytes).unwrap();
+
+        let decoded_array = decoded.as_array_u128().unwrap();
+        assert_eq!(decoded_array.len(), 3);
+        assert_eq!(decoded_array.get(0), Some(&u128::MAX));
+        assert_eq!(decoded_array.get(1), Some(&u128::MIN));
+        assert_eq!(decoded_array.get(2), Some(&12345u128));
+    }
+
+    #[test]
+    fn test_typed_collection_type_safety() {
+        let set_u64 = TypedValue::SetU64(Set::new());
+
+        // Should fail when trying to extract as wrong type
+        assert!(set_u64.as_set().is_err());
+        assert!(set_u64.as_set_i64().is_err());
+        assert!(set_u64.as_array_u64().is_err());
+
+        // Should succeed with correct type
+        assert!(set_u64.as_set_u64().is_ok());
     }
 }

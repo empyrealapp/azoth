@@ -125,27 +125,15 @@ impl EventCodec for JsonCodec {
 }
 
 /// MessagePack codec (binary, compact)
-///
-/// Note: Requires `rmp-serde` feature (not yet added)
 pub struct MsgPackCodec;
 
 impl EventCodec for MsgPackCodec {
-    fn encode<T: Serialize>(&self, _event: &Event<T>) -> Result<Vec<u8>> {
-        // TODO: Implement with rmp-serde
-        // rmp_serde::to_vec(event)
-        //     .map_err(|e| AzothError::Serialization(e.to_string()))
-        Err(AzothError::InvalidState(
-            "MessagePack codec not yet implemented - add rmp-serde dependency".into(),
-        ))
+    fn encode<T: Serialize>(&self, event: &Event<T>) -> Result<Vec<u8>> {
+        rmp_serde::to_vec(event).map_err(|e| AzothError::Serialization(e.to_string()))
     }
 
-    fn decode<T: DeserializeOwned>(&self, _bytes: &[u8]) -> Result<Event<T>> {
-        // TODO: Implement with rmp-serde
-        // rmp_serde::from_slice(bytes)
-        //     .map_err(|e| AzothError::Serialization(e.to_string()))
-        Err(AzothError::InvalidState(
-            "MessagePack codec not yet implemented - add rmp-serde dependency".into(),
-        ))
+    fn decode<T: DeserializeOwned>(&self, bytes: &[u8]) -> Result<Event<T>> {
+        rmp_serde::from_slice(bytes).map_err(|e| AzothError::Serialization(e.to_string()))
     }
 
     fn name(&self) -> &str {
@@ -306,5 +294,31 @@ mod tests {
 
         let result = registry.process("unknown", &serde_json::json!({}));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_msgpack_codec() {
+        let codec = MsgPackCodec;
+        let event = Event::new(
+            "withdraw",
+            TestPayload {
+                amount: 50,
+                account: "bob".to_string(),
+            },
+        );
+
+        // Encode
+        let bytes = codec.encode(&event).unwrap();
+
+        // Decode
+        let decoded: Event<TestPayload> = codec.decode(&bytes).unwrap();
+
+        assert_eq!(decoded.name, "withdraw");
+        assert_eq!(decoded.payload.amount, 50);
+        assert_eq!(decoded.payload.account, "bob");
+
+        // MessagePack should be more compact than JSON
+        let json_bytes = JsonCodec.encode(&event).unwrap();
+        assert!(bytes.len() < json_bytes.len());
     }
 }
