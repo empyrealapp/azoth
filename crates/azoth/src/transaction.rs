@@ -259,6 +259,14 @@ impl<'a> TransactionContext<'a> {
     pub fn log_bytes(&mut self, event: &[u8]) -> Result<EventId> {
         self.txn.append_event(event)
     }
+
+    /// Iterate over all state keys and values
+    ///
+    /// Returns a vector of (key, value) pairs.
+    /// Note: This performs a full scan and should be used sparingly.
+    pub fn iter_state(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        self.txn.iter_state()
+    }
 }
 
 /// Transaction builder
