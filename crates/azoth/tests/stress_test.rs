@@ -115,7 +115,7 @@ fn test_high_contention_same_key() {
                         Ok(())
                     })
                     .execute(|ctx| {
-                        let current = ctx.get(b"shared")?.as_u256()?;
+                        let _current = ctx.get(b"shared")?.as_u256()?;
                         // Simplified decrement
                         ctx.set(b"shared", &TypedValue::U256(U256::from(990u64)))?;
                         ctx.log(

@@ -106,6 +106,7 @@ impl EventHandler for WithdrawHandler {
 }
 
 /// Continuous event processor
+#[allow(dead_code)]
 async fn event_processor(
     db: &AzothDb,
     conn: &Connection,
@@ -262,7 +263,7 @@ async fn main() -> Result<()> {
 
     // Now run processor to consume the events
     // It will process all events then hit the shutdown flag
-    let mut cursor = 0u64;
+    let cursor = 0u64;
     let meta = db.canonical().meta()?;
     let tip = if meta.next_event_id > 0 {
         meta.next_event_id - 1
@@ -276,7 +277,6 @@ async fn main() -> Result<()> {
 
         while let Some((id, bytes)) = iter.next()? {
             registry.process(&conn, id, &bytes)?;
-            cursor = id;
             processed += 1;
         }
 
