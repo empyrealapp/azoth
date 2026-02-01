@@ -343,7 +343,55 @@ impl AzothDb {
         self.canonical.range(start, end)
     }
 
+    /// Prepare database for shutdown
+    ///
+    /// This method should be called before closing the database to ensure
+    /// all pending operations complete. It:
+    /// 1. Pauses ingestion
+    /// 2. Seals the canonical store
+    /// 3. Runs projector to catch up
+    ///
+    /// After calling this, you can create a final checkpoint using
+    /// `CheckpointManager::shutdown_checkpoint()`, then call `close()`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// // Prepare for shutdown
+    /// db.prepare_shutdown()?;
+    ///
+    /// // Create final checkpoint (async)
+    /// checkpoint_manager.shutdown_checkpoint().await?;
+    ///
+    /// // Close database
+    /// db.close()?;
+    /// ```
+    pub fn prepare_shutdown(&self) -> Result<()> {
+        use crate::CanonicalStore;
+
+        tracing::info!("Preparing database for shutdown...");
+
+        // 1. Pause ingestion
+        self.canonical.pause_ingestion()?;
+        tracing::info!("Ingestion paused");
+
+        // 2. Seal the canonical store
+        let sealed_id = self.canonical.seal()?;
+        tracing::info!("Canonical store sealed at event {}", sealed_id);
+
+        // 3. Run projector to catch up
+        tracing::info!("Running projector to catch up...");
+        while self.projector.get_lag()? > 0 {
+            self.projector.run_once()?;
+        }
+        tracing::info!("Projector caught up");
+
+        tracing::info!("Database prepared for shutdown");
+        Ok(())
+    }
+
     /// Close the database (ensures clean shutdown)
+    ///
+    /// For graceful shutdown with checkpoint, call `shutdown()` first.
     pub fn close(self) -> Result<()> {
         use crate::{CanonicalStore, ProjectionStore};
 
