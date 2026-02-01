@@ -27,6 +27,9 @@ pub enum AzothError {
     #[error("Restore error: {0}")]
     Restore(String),
 
+    #[error("Encryption error: {0}")]
+    Encryption(String),
+
     #[error("Projection error: {0}")]
     Projection(String),
 
