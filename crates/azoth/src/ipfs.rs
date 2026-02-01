@@ -51,7 +51,7 @@ impl IpfsProvider {
     ///
     /// Looks for:
     /// - PINATA_API_KEY and PINATA_SECRET_KEY for Pinata provider
-    /// - PINATA_GATEWAY_URL (optional, defaults to https://gateway.pinata.cloud/ipfs/)
+    /// - PINATA_GATEWAY_URL (optional, defaults to <https://gateway.pinata.cloud/ipfs/>)
     /// - IPFS_GATEWAY_URL for gateway-only provider
     pub fn from_env() -> Result<Self> {
         use std::env;
