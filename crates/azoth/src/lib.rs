@@ -29,11 +29,14 @@
 //! ```
 
 pub mod backup;
+pub mod checkpoint;
 pub mod db;
 pub mod dead_letter_queue;
 pub mod event_format;
 pub mod event_handler;
 pub mod event_processor;
+pub mod ipfs;
+pub mod ipfs_storage;
 pub mod migration;
 pub mod prelude;
 pub mod transaction;
@@ -58,6 +61,9 @@ pub use azoth_sqlite::SqliteProjectionStore;
 
 // Re-export main types from this crate
 pub use backup::{BackupOptions, EncryptionKey};
+pub use checkpoint::{
+    CheckpointConfig, CheckpointManager, CheckpointMetadata, CheckpointStorage, LocalStorage,
+};
 pub use db::AzothDb;
 pub use dead_letter_queue::{DeadLetterQueue, FailedEvent};
 pub use event_format::{Event, EventCodec, EventTypeRegistry, JsonCodec, MsgPackCodec};
@@ -65,6 +71,8 @@ pub use event_handler::{BatchConfig, BatchEvent, EventHandler, EventHandlerRegis
 pub use event_processor::{
     ErrorAction, ErrorStrategy, EventProcessor, EventProcessorBuilder, ShutdownHandle,
 };
+pub use ipfs::{IpfsClient, IpfsProvider};
+pub use ipfs_storage::IpfsStorage;
 pub use migration::{Migration, MigrationManager};
 pub use transaction::{PreflightContext, Transaction, TransactionContext};
 pub use typed_values::{Array, Set, TypedValue, I256, U256};
