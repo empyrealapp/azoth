@@ -302,7 +302,10 @@ mod tests {
                 for j in 0..100 {
                     let key = format!("key-{}-{}", i, j);
                     let value = format!("value-{}-{}", i, j);
-                    cache_clone.insert(key.as_bytes().to_vec(), CachedValue::Some(value.as_bytes().to_vec()));
+                    cache_clone.insert(
+                        key.as_bytes().to_vec(),
+                        CachedValue::Some(value.as_bytes().to_vec()),
+                    );
 
                     // Try to read it back
                     cache_clone.get(key.as_bytes());
