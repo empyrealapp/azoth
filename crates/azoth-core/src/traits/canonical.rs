@@ -82,6 +82,15 @@ pub trait CanonicalTxn {
     /// Phase 2: Delete state (fast, single-writer)
     fn del_state(&mut self, key: &[u8]) -> Result<()>;
 
+    /// Phase 2: Iterate over all state entries
+    ///
+    /// Returns a vector of (key, value) pairs.
+    /// Note: This performs a full scan and should be used sparingly.
+    /// Default implementation returns empty vector (not all backends support iteration).
+    fn iter_state(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        Ok(Vec::new())
+    }
+
     /// Phase 3: Append single event (fast, single-writer)
     fn append_event(&mut self, event: &[u8]) -> Result<EventId>;
 

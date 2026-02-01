@@ -5,7 +5,7 @@ use azoth_core::{
     types::{CommitInfo, EventId},
 };
 use azoth_file_log::FileEventLog;
-use lmdb::{Database, RwTransaction, Transaction, WriteFlags};
+use lmdb::{Cursor, Database, RwTransaction, Transaction, WriteFlags};
 use std::sync::Arc;
 
 use crate::keys::meta_keys;
@@ -140,6 +140,23 @@ impl<'a> CanonicalTxn for LmdbWriteTxn<'a> {
             Err(lmdb::Error::NotFound) => Ok(()), // Idempotent
             Err(e) => Err(AzothError::Transaction(e.to_string())),
         }
+    }
+
+    fn iter_state(&self) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let txn = self
+            .txn
+            .as_ref()
+            .ok_or_else(|| AzothError::InvalidState("Transaction already committed".into()))?;
+
+        let mut results = Vec::new();
+        let mut cursor = txn.open_ro_cursor(self.state_db)
+            .map_err(|e| AzothError::Transaction(e.to_string()))?;
+
+        for (key, value) in cursor.iter() {
+            results.push((key.to_vec(), value.to_vec()));
+        }
+
+        Ok(results)
     }
 
     fn append_event(&mut self, event: &[u8]) -> Result<EventId> {
