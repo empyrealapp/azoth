@@ -4,8 +4,8 @@
 //! - Integer types (i8, i16, i32, i64, i128, u8, u16, u32, u64, u128, u256)
 //! - Raw bytes
 //! - String values
-//! - Typed sets (String, i64, u64, u128, Vec<u8>) with membership testing
-//! - Typed arrays (String, i64, u64, u128, Vec<u8>) with push/pop/insert operations
+//! - Typed sets (String, i64, u64, u128, `Vec<u8>`) with membership testing
+//! - Typed arrays (String, i64, u64, u128, `Vec<u8>`) with push/pop/insert operations
 //!
 //! # Example
 //!
@@ -397,7 +397,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as Set<i64>
+    /// Extract as `Set<i64>`
     pub fn as_set_i64(&self) -> Result<&Set<i64>> {
         match self {
             TypedValue::SetI64(s) => Ok(s),
@@ -405,7 +405,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as mutable Set<i64>
+    /// Extract as mutable `Set<i64>`
     pub fn as_set_i64_mut(&mut self) -> Result<&mut Set<i64>> {
         match self {
             TypedValue::SetI64(s) => Ok(s),
@@ -413,7 +413,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as Set<u64>
+    /// Extract as `Set<u64>`
     pub fn as_set_u64(&self) -> Result<&Set<u64>> {
         match self {
             TypedValue::SetU64(s) => Ok(s),
@@ -421,7 +421,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as mutable Set<u64>
+    /// Extract as mutable `Set<u64>`
     pub fn as_set_u64_mut(&mut self) -> Result<&mut Set<u64>> {
         match self {
             TypedValue::SetU64(s) => Ok(s),
@@ -429,7 +429,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as Set<u128>
+    /// Extract as `Set<u128>`
     pub fn as_set_u128(&self) -> Result<&Set<u128>> {
         match self {
             TypedValue::SetU128(s) => Ok(s),
@@ -437,7 +437,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as mutable Set<u128>
+    /// Extract as mutable `Set<u128>`
     pub fn as_set_u128_mut(&mut self) -> Result<&mut Set<u128>> {
         match self {
             TypedValue::SetU128(s) => Ok(s),
@@ -445,7 +445,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as Array<i64>
+    /// Extract as `Array<i64>`
     pub fn as_array_i64(&self) -> Result<&Array<i64>> {
         match self {
             TypedValue::ArrayI64(a) => Ok(a),
@@ -453,7 +453,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as mutable Array<i64>
+    /// Extract as mutable `Array<i64>`
     pub fn as_array_i64_mut(&mut self) -> Result<&mut Array<i64>> {
         match self {
             TypedValue::ArrayI64(a) => Ok(a),
@@ -461,7 +461,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as Array<u64>
+    /// Extract as `Array<u64>`
     pub fn as_array_u64(&self) -> Result<&Array<u64>> {
         match self {
             TypedValue::ArrayU64(a) => Ok(a),
@@ -469,7 +469,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as mutable Array<u64>
+    /// Extract as mutable `Array<u64>`
     pub fn as_array_u64_mut(&mut self) -> Result<&mut Array<u64>> {
         match self {
             TypedValue::ArrayU64(a) => Ok(a),
@@ -477,7 +477,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as Array<u128>
+    /// Extract as `Array<u128>`
     pub fn as_array_u128(&self) -> Result<&Array<u128>> {
         match self {
             TypedValue::ArrayU128(a) => Ok(a),
@@ -485,7 +485,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as mutable Array<u128>
+    /// Extract as mutable `Array<u128>`
     pub fn as_array_u128_mut(&mut self) -> Result<&mut Array<u128>> {
         match self {
             TypedValue::ArrayU128(a) => Ok(a),
@@ -493,7 +493,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as Set<Vec<u8>>
+    /// Extract as `Set<Vec<u8>>`
     pub fn as_set_bytes(&self) -> Result<&Set<Vec<u8>>> {
         match self {
             TypedValue::SetBytes(s) => Ok(s),
@@ -501,7 +501,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as mutable Set<Vec<u8>>
+    /// Extract as mutable `Set<Vec<u8>>`
     pub fn as_set_bytes_mut(&mut self) -> Result<&mut Set<Vec<u8>>> {
         match self {
             TypedValue::SetBytes(s) => Ok(s),
@@ -509,7 +509,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as Array<Vec<u8>>
+    /// Extract as `Array<Vec<u8>>`
     pub fn as_array_bytes(&self) -> Result<&Array<Vec<u8>>> {
         match self {
             TypedValue::ArrayBytes(a) => Ok(a),
@@ -517,7 +517,7 @@ impl TypedValue {
         }
     }
 
-    /// Extract as mutable Array<Vec<u8>>
+    /// Extract as mutable `Array<Vec<u8>>`
     pub fn as_array_bytes_mut(&mut self) -> Result<&mut Array<Vec<u8>>> {
         match self {
             TypedValue::ArrayBytes(a) => Ok(a),
