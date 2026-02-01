@@ -38,15 +38,14 @@ impl EventIter for EventIterAdapter {
 pub struct LmdbCanonicalStore {
     pub(crate) env: Arc<Environment>,
     pub(crate) state_db: Database,
-    pub(crate) events_db: Database, // Deprecated: kept for backward compatibility
     pub(crate) meta_db: Database,
     pub(crate) config_path: std::path::PathBuf,
-    pub(crate) event_log: Arc<FileEventLog>, // NEW: File-based event storage
+    pub(crate) event_log: Arc<FileEventLog>,
     lock_manager: Arc<LockManager>,
-    write_lock: Arc<Mutex<()>>, // Only for pause_ingestion
+    write_lock: Arc<Mutex<()>>,
     paused: Arc<AtomicBool>,
-    chunk_size: usize,             // Chunk size for state iterators
-    txn_counter: Arc<AtomicUsize>, // Track active transactions for pause_ingestion
+    chunk_size: usize,
+    txn_counter: Arc<AtomicUsize>,
 }
 
 impl LmdbCanonicalStore {
@@ -111,7 +110,7 @@ impl CanonicalStore for LmdbCanonicalStore {
 
         // Configure LMDB environment
         let mut env_builder = Environment::new();
-        env_builder.set_max_dbs(3); // state, events, meta
+        env_builder.set_max_dbs(2); // state, meta
         env_builder.set_map_size(cfg.map_size);
         env_builder.set_max_readers(cfg.max_readers);
 
@@ -135,10 +134,6 @@ impl CanonicalStore for LmdbCanonicalStore {
         // Open databases
         let state_db = env
             .create_db(Some("state"), DatabaseFlags::empty())
-            .map_err(|e| AzothError::Transaction(e.to_string()))?;
-
-        let events_db = env
-            .create_db(Some("events"), DatabaseFlags::empty())
             .map_err(|e| AzothError::Transaction(e.to_string()))?;
 
         let meta_db = env
@@ -199,7 +194,6 @@ impl CanonicalStore for LmdbCanonicalStore {
         Ok(Self {
             env,
             state_db,
-            events_db,
             meta_db,
             config_path: cfg.path.clone(),
             event_log,
@@ -252,7 +246,6 @@ impl CanonicalStore for LmdbCanonicalStore {
         Ok(LmdbWriteTxn::new(
             txn,
             self.state_db,
-            self.events_db,
             self.meta_db,
             self.event_log.clone(),
             Arc::downgrade(&self.txn_counter),
@@ -467,11 +460,8 @@ impl LmdbCanonicalStore {
                 crate::state_iter::LmdbStateIter::with_prefix(env, state_db, &prefix, chunk_size)?;
 
             let mut results = Vec::new();
-            loop {
-                match iter.next()? {
-                    Some(item) => results.push(item),
-                    None => break,
-                }
+            while let Some(item) = iter.next()? {
+                results.push(item);
             }
 
             Ok(results)

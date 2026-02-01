@@ -20,14 +20,12 @@ use crate::keys::meta_keys;
 pub struct LmdbWriteTxn<'a> {
     txn: Option<RwTransaction<'a>>,
     state_db: Database,
-    #[allow(dead_code)]
-    events_db: Database, // Deprecated: kept for backward compatibility
     meta_db: Database,
-    event_log: Arc<FileEventLog>, // NEW: File-based event storage
-    pending_events: Vec<Vec<u8>>, // NEW: Events to write on commit
+    event_log: Arc<FileEventLog>,
+    pending_events: Vec<Vec<u8>>,
     stats: TxnStats,
-    txn_counter: Weak<AtomicUsize>, // Track transaction completion
-    counter_decremented: bool,      // Track if counter was already decremented
+    txn_counter: Weak<AtomicUsize>,
+    counter_decremented: bool,
 }
 
 /// Transaction statistics
@@ -66,7 +64,6 @@ impl<'a> LmdbWriteTxn<'a> {
     pub fn new(
         txn: RwTransaction<'a>,
         state_db: Database,
-        events_db: Database,
         meta_db: Database,
         event_log: Arc<FileEventLog>,
         txn_counter: Weak<AtomicUsize>,
@@ -74,7 +71,6 @@ impl<'a> LmdbWriteTxn<'a> {
         Self {
             txn: Some(txn),
             state_db,
-            events_db,
             meta_db,
             event_log,
             pending_events: Vec::new(),
