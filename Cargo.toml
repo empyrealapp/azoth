@@ -44,6 +44,7 @@ toml = "0.8"
 # Async runtime for stripe locking
 tokio = { version = "1.0", features = ["rt", "sync", "macros"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
+dashmap = "6.0"
 
 # LMDB
 lmdb = "0.8"
