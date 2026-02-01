@@ -2,7 +2,7 @@ use azoth_core::{
     error::{AzothError, Result},
     event_log::{EventLog, EventLogIterator},
     lock_manager::LockManager,
-    traits::{self, CanonicalStore, EventIter},
+    traits::{self, CanonicalStore, EventIter, StateIter},
     types::{BackupInfo, CanonicalMeta, EventId},
     CanonicalConfig,
 };
@@ -10,7 +10,7 @@ use azoth_file_log::{FileEventLog, FileEventLogConfig};
 use lmdb::{Database, DatabaseFlags, Environment, EnvironmentFlags, Transaction, WriteFlags};
 use std::path::Path;
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
 
@@ -43,8 +43,10 @@ pub struct LmdbCanonicalStore {
     pub(crate) config_path: std::path::PathBuf,
     pub(crate) event_log: Arc<FileEventLog>, // NEW: File-based event storage
     lock_manager: Arc<LockManager>,
-    write_lock: Arc<Mutex<()>>, // Single writer
+    write_lock: Arc<Mutex<()>>, // Only for pause_ingestion
     paused: Arc<AtomicBool>,
+    chunk_size: usize, // Chunk size for state iterators
+    txn_counter: Arc<AtomicUsize>, // Track active transactions for pause_ingestion
 }
 
 impl LmdbCanonicalStore {
@@ -204,6 +206,8 @@ impl CanonicalStore for LmdbCanonicalStore {
             lock_manager,
             write_lock: Arc::new(Mutex::new(())),
             paused: Arc::new(AtomicBool::new(false)),
+            chunk_size: cfg.state_iter_chunk_size,
+            txn_counter: Arc::new(AtomicUsize::new(0)),
         })
     }
 
@@ -213,20 +217,18 @@ impl CanonicalStore for LmdbCanonicalStore {
     }
 
     fn read_txn(&self) -> Result<Self::Txn<'_>> {
-        // Read-only transactions not supported yet
-        // Would require separate transaction type
-        Err(AzothError::InvalidState(
-            "Read-only transactions not yet implemented".into(),
-        ))
+        // Read-only transactions are provided via a separate method
+        // on LmdbCanonicalStore to avoid trait type constraints
+        self.write_txn()
     }
 
     fn write_txn(&self) -> Result<Self::Txn<'_>> {
-        // Acquire write lock (single writer)
-        // Note: This is held for the entire transaction duration
-        let _guard = self.write_lock.lock().unwrap();
+        // Increment transaction counter (transaction starting)
+        self.txn_counter.fetch_add(1, Ordering::SeqCst);
 
-        // Check if paused
+        // Check if paused (no lock needed)
         if self.paused.load(Ordering::SeqCst) {
+            self.txn_counter.fetch_sub(1, Ordering::SeqCst);
             return Err(AzothError::Paused);
         }
 
@@ -234,20 +236,24 @@ impl CanonicalStore for LmdbCanonicalStore {
         let ro_txn = self
             .env
             .begin_ro_txn()
-            .map_err(|e| AzothError::Transaction(e.to_string()))?;
+            .map_err(|e| {
+                self.txn_counter.fetch_sub(1, Ordering::SeqCst);
+                AzothError::Transaction(e.to_string())
+            })?;
         if let Some(sealed_id) = self.get_sealed_event_id(&ro_txn)? {
+            self.txn_counter.fetch_sub(1, Ordering::SeqCst);
             return Err(AzothError::Sealed(sealed_id));
         }
         drop(ro_txn); // Release read transaction
 
+        // Let LMDB handle write serialization (no lock needed)
         let txn = self
             .env
             .begin_rw_txn()
-            .map_err(|e| AzothError::Transaction(e.to_string()))?;
-
-        // Lock is released when guard drops at the end of this scope
-        // This means the transaction can only be created, not held across await points
-        drop(_guard);
+            .map_err(|e| {
+                self.txn_counter.fetch_sub(1, Ordering::SeqCst);
+                AzothError::Transaction(e.to_string())
+            })?;
 
         Ok(LmdbWriteTxn::new(
             txn,
@@ -255,6 +261,7 @@ impl CanonicalStore for LmdbCanonicalStore {
             self.events_db,
             self.meta_db,
             self.event_log.clone(),
+            Arc::downgrade(&self.txn_counter),
         ))
     }
 
@@ -266,14 +273,23 @@ impl CanonicalStore for LmdbCanonicalStore {
     }
 
     fn range(&self, start: &[u8], end: Option<&[u8]>) -> Result<Box<dyn traits::StateIter>> {
-        let iter =
-            crate::state_iter::LmdbStateIter::new(self.env.clone(), self.state_db, start, end)?;
+        let iter = crate::state_iter::LmdbStateIter::new(
+            self.env.clone(),
+            self.state_db,
+            start,
+            end,
+            self.chunk_size,
+        )?;
         Ok(Box::new(iter))
     }
 
     fn scan_prefix(&self, prefix: &[u8]) -> Result<Box<dyn traits::StateIter>> {
-        let iter =
-            crate::state_iter::LmdbStateIter::with_prefix(self.env.clone(), self.state_db, prefix)?;
+        let iter = crate::state_iter::LmdbStateIter::with_prefix(
+            self.env.clone(),
+            self.state_db,
+            prefix,
+            self.chunk_size,
+        )?;
         Ok(Box::new(iter))
     }
 
@@ -315,8 +331,18 @@ impl CanonicalStore for LmdbCanonicalStore {
 
     fn pause_ingestion(&self) -> Result<()> {
         self.paused.store(true, Ordering::SeqCst);
-        // Wait for in-flight transactions (they hold write_lock)
-        let _guard = self.write_lock.lock().unwrap();
+
+        // Wait for in-flight transactions to complete
+        let start = std::time::Instant::now();
+        while self.txn_counter.load(Ordering::SeqCst) > 0 {
+            if start.elapsed() > std::time::Duration::from_secs(30) {
+                return Err(AzothError::Timeout(
+                    "Waiting for in-flight transactions to complete".into(),
+                ));
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
         Ok(())
     }
 
@@ -367,6 +393,103 @@ impl CanonicalStore for LmdbCanonicalStore {
 }
 
 impl LmdbCanonicalStore {
+    /// Begin a read-only transaction
+    ///
+    /// Read-only transactions allow concurrent reads without blocking writes or other reads.
+    /// This is more efficient than write_txn() for preflight validation and queries.
+    pub fn read_only_txn(&self) -> Result<crate::txn::LmdbReadTxn<'_>> {
+        let txn = self
+            .env
+            .begin_ro_txn()
+            .map_err(|e| AzothError::Transaction(e.to_string()))?;
+        Ok(crate::txn::LmdbReadTxn::new(txn, self.state_db))
+    }
+
+    /// Iterate events asynchronously
+    ///
+    /// This method wraps the synchronous event iterator in a blocking task,
+    /// allowing it to be used in async contexts without blocking the runtime.
+    pub async fn iter_events_async(
+        &self,
+        from: EventId,
+        to: Option<EventId>,
+    ) -> Result<Vec<(EventId, Vec<u8>)>> {
+        let event_log = self.event_log.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let mut iter = event_log.iter_range(from, to)?;
+            let mut results = Vec::new();
+
+            loop {
+                match iter.next() {
+                    Some(Ok(item)) => results.push(item),
+                    Some(Err(e)) => return Err(e),
+                    None => break,
+                }
+            }
+
+            Ok(results)
+        })
+        .await
+        .map_err(|e| AzothError::Internal(format!("Task join error: {}", e)))?
+    }
+
+    /// Get single state value asynchronously
+    ///
+    /// This method wraps the synchronous read in a blocking task,
+    /// allowing it to be used in async contexts without blocking the runtime.
+    pub async fn get_state_async(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+        let env = self.env.clone();
+        let state_db = self.state_db;
+        let key = key.to_vec();
+
+        tokio::task::spawn_blocking(move || {
+            let txn = env
+                .begin_ro_txn()
+                .map_err(|e| AzothError::Transaction(e.to_string()))?;
+
+            match txn.get(state_db, &key) {
+                Ok(bytes) => Ok(Some(bytes.to_vec())),
+                Err(lmdb::Error::NotFound) => Ok(None),
+                Err(e) => Err(AzothError::Transaction(e.to_string())),
+            }
+        })
+        .await
+        .map_err(|e| AzothError::Internal(format!("Task join error: {}", e)))?
+    }
+
+    /// Scan prefix asynchronously
+    ///
+    /// This method wraps the synchronous prefix scan in a blocking task,
+    /// allowing it to be used in async contexts without blocking the runtime.
+    pub async fn scan_prefix_async(&self, prefix: &[u8]) -> Result<Vec<(Vec<u8>, Vec<u8>)>> {
+        let env = self.env.clone();
+        let state_db = self.state_db;
+        let prefix = prefix.to_vec();
+        let chunk_size = self.chunk_size;
+
+        tokio::task::spawn_blocking(move || {
+            let mut iter = crate::state_iter::LmdbStateIter::with_prefix(
+                env,
+                state_db,
+                &prefix,
+                chunk_size,
+            )?;
+
+            let mut results = Vec::new();
+            loop {
+                match iter.next()? {
+                    Some(item) => results.push(item),
+                    None => break,
+                }
+            }
+
+            Ok(results)
+        })
+        .await
+        .map_err(|e| AzothError::Internal(format!("Task join error: {}", e)))?
+    }
+
     /// Get reference to the file-based event log
     ///
     /// This allows direct access to event storage for advanced use cases.

@@ -55,7 +55,7 @@ impl<'a> PreflightContext<'a> {
 
     /// Get a typed value from state
     pub fn get(&self, key: &[u8]) -> Result<TypedValue> {
-        let txn = self.db.canonical().write_txn()?;
+        let txn = self.db.canonical().read_only_txn()?;
         match txn.get_state(key)? {
             Some(bytes) => TypedValue::from_bytes(&bytes),
             None => Err(AzothError::InvalidState("Key does not exist".into())),
@@ -64,7 +64,7 @@ impl<'a> PreflightContext<'a> {
 
     /// Get a typed value, returning None if key doesn't exist
     pub fn get_opt(&self, key: &[u8]) -> Result<Option<TypedValue>> {
-        let txn = self.db.canonical().write_txn()?;
+        let txn = self.db.canonical().read_only_txn()?;
         match txn.get_state(key)? {
             Some(bytes) => Ok(Some(TypedValue::from_bytes(&bytes)?)),
             None => Ok(None),
@@ -73,7 +73,7 @@ impl<'a> PreflightContext<'a> {
 
     /// Check if key exists
     pub fn exists(&self, key: &[u8]) -> Result<bool> {
-        let txn = self.db.canonical().write_txn()?;
+        let txn = self.db.canonical().read_only_txn()?;
         Ok(txn.get_state(key)?.is_some())
     }
 }
@@ -81,21 +81,54 @@ impl<'a> PreflightContext<'a> {
 /// Transaction context for state updates and event logging
 pub struct TransactionContext<'a> {
     txn: <crate::LmdbCanonicalStore as CanonicalStore>::Txn<'a>,
+    value_cache: std::cell::RefCell<std::collections::HashMap<Vec<u8>, TypedValue>>,
 }
 
 impl<'a> TransactionContext<'a> {
     /// Get a typed value from state
     pub fn get(&self, key: &[u8]) -> Result<TypedValue> {
+        // Check cache first
+        {
+            let cache = self.value_cache.borrow();
+            if let Some(cached) = cache.get(key) {
+                return Ok(cached.clone());
+            }
+        }
+
+        // Read from store
         match self.txn.get_state(key)? {
-            Some(bytes) => TypedValue::from_bytes(&bytes),
+            Some(bytes) => {
+                let value = TypedValue::from_bytes(&bytes)?;
+                // Cache the value
+                self.value_cache
+                    .borrow_mut()
+                    .insert(key.to_vec(), value.clone());
+                Ok(value)
+            }
             None => Err(AzothError::InvalidState("Key does not exist".into())),
         }
     }
 
     /// Get a typed value, returning None if key doesn't exist
     pub fn get_opt(&self, key: &[u8]) -> Result<Option<TypedValue>> {
+        // Check cache first
+        {
+            let cache = self.value_cache.borrow();
+            if let Some(cached) = cache.get(key) {
+                return Ok(Some(cached.clone()));
+            }
+        }
+
+        // Read from store
         match self.txn.get_state(key)? {
-            Some(bytes) => Ok(Some(TypedValue::from_bytes(&bytes)?)),
+            Some(bytes) => {
+                let value = TypedValue::from_bytes(&bytes)?;
+                // Cache the value
+                self.value_cache
+                    .borrow_mut()
+                    .insert(key.to_vec(), value.clone());
+                Ok(Some(value))
+            }
             None => Ok(None),
         }
     }
@@ -103,12 +136,20 @@ impl<'a> TransactionContext<'a> {
     /// Set a key to a typed value
     pub fn set(&mut self, key: &[u8], value: &TypedValue) -> Result<()> {
         let bytes = value.to_bytes()?;
-        self.txn.put_state(key, &bytes)
+        self.txn.put_state(key, &bytes)?;
+        // Update cache with new value
+        self.value_cache
+            .borrow_mut()
+            .insert(key.to_vec(), value.clone());
+        Ok(())
     }
 
     /// Delete a key from state
     pub fn delete(&mut self, key: &[u8]) -> Result<()> {
-        self.txn.del_state(key)
+        self.txn.del_state(key)?;
+        // Remove from cache
+        self.value_cache.borrow_mut().remove(key);
+        Ok(())
     }
 
     /// Check if a key exists
@@ -335,7 +376,10 @@ impl<'a> Transaction<'a> {
 
         // Phase 3 & 4: Begin transaction, run updates, append events, commit
         let txn = self.db.canonical().write_txn()?;
-        let mut update_ctx = TransactionContext { txn };
+        let mut update_ctx = TransactionContext {
+            txn,
+            value_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
+        };
 
         f(&mut update_ctx)?;
 

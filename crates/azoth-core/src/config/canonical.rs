@@ -25,6 +25,20 @@ pub struct CanonicalConfig {
     /// Default: 126
     #[serde(default = "default_max_readers")]
     pub max_readers: u32,
+
+    /// Use read-only transactions for preflight (default: true)
+    ///
+    /// When enabled, preflight validation uses concurrent read-only transactions
+    /// instead of write transactions, improving throughput and reducing contention.
+    #[serde(default = "default_true")]
+    pub preflight_read_only: bool,
+
+    /// Chunk size for state iteration (default: 1000)
+    ///
+    /// State iterators fetch data in chunks to maintain constant memory usage.
+    /// Larger chunks improve throughput but use more memory temporarily.
+    #[serde(default = "default_chunk_size")]
+    pub state_iter_chunk_size: usize,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -50,6 +64,14 @@ fn default_max_readers() -> u32 {
     126
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_chunk_size() -> usize {
+    1000
+}
+
 impl CanonicalConfig {
     pub fn new(path: PathBuf) -> Self {
         Self {
@@ -58,6 +80,8 @@ impl CanonicalConfig {
             sync_mode: SyncMode::default(),
             stripe_count: default_stripe_count(),
             max_readers: default_max_readers(),
+            preflight_read_only: default_true(),
+            state_iter_chunk_size: default_chunk_size(),
         }
     }
 

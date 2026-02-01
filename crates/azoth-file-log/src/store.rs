@@ -23,14 +23,18 @@ pub struct FileEventLogConfig {
 
     /// Buffer size for writes
     pub write_buffer_size: usize,
+
+    /// Maximum size for batch write buffer (bytes)
+    pub batch_buffer_size: usize,
 }
 
 impl Default for FileEventLogConfig {
     fn default() -> Self {
         Self {
             base_dir: PathBuf::from("./data/event-log"),
-            max_file_size: 512 * 1024 * 1024, // 512MB
-            write_buffer_size: 64 * 1024,     // 64KB
+            max_file_size: 512 * 1024 * 1024,   // 512MB
+            write_buffer_size: 256 * 1024,      // 256KB (increased from 64KB)
+            batch_buffer_size: 1024 * 1024,     // 1MB for batch writes
         }
     }
 }
@@ -108,7 +112,8 @@ impl FileEventLog {
     fn save_meta(&self) -> Result<()> {
         let meta = self.meta.lock().unwrap();
         let meta_path = self.config.base_dir.join("meta.json");
-        let data = serde_json::to_string_pretty(&*meta)
+        // Use compact serialization (not pretty) for better performance
+        let data = serde_json::to_string(&*meta)
             .map_err(|e| AzothError::Projection(format!("Failed to serialize meta: {}", e)))?;
         std::fs::write(&meta_path, data)?;
         Ok(())
@@ -220,12 +225,42 @@ impl EventLog for FileEventLog {
             return Err(AzothError::InvalidState("Cannot append empty batch".into()));
         }
 
-        let last_id = first_event_id + events.len() as u64 - 1;
+        // Calculate total size needed: (8 + 4 + data_len) per event
+        let total_size: usize = events
+            .iter()
+            .map(|e| 8 + 4 + e.len()) // event_id + size + data
+            .sum();
 
-        // Write all events with pre-allocated IDs
-        for (i, event_bytes) in events.iter().enumerate() {
-            let event_id = first_event_id + i as u64;
-            self.write_event_entry(event_id, event_bytes)?;
+        // Check if batch exceeds reasonable size
+        if total_size > self.config.batch_buffer_size {
+            // For very large batches, fall back to individual writes
+            // to avoid excessive memory allocation
+            for (i, event_bytes) in events.iter().enumerate() {
+                let event_id = first_event_id + i as u64;
+                self.write_event_entry(event_id, event_bytes)?;
+            }
+        } else {
+            // Pre-allocate buffer for entire batch
+            let mut buffer = Vec::with_capacity(total_size);
+
+            // Serialize all events into buffer
+            for (i, event_bytes) in events.iter().enumerate() {
+                let event_id = first_event_id + i as u64;
+
+                // Write event_id (8 bytes, big-endian)
+                buffer.extend_from_slice(&event_id.to_be_bytes());
+
+                // Write size (4 bytes, big-endian)
+                let size = event_bytes.len() as u32;
+                buffer.extend_from_slice(&size.to_be_bytes());
+
+                // Write event data
+                buffer.extend_from_slice(event_bytes);
+            }
+
+            // Single lock acquisition + single write syscall
+            let mut writer = self.writer.lock().unwrap();
+            writer.write_all(&buffer)?;
         }
 
         // Flush after batch
@@ -235,6 +270,7 @@ impl EventLog for FileEventLog {
         }
 
         // Update metadata
+        let last_id = first_event_id + events.len() as u64 - 1;
         {
             let mut meta = self.meta.lock().unwrap();
             meta.next_event_id = last_id + 1;
@@ -468,6 +504,7 @@ mod tests {
             base_dir: temp_dir.path().to_path_buf(),
             max_file_size: 1024, // Small for testing rotation
             write_buffer_size: 128,
+            batch_buffer_size: 4096,
         };
         let log = FileEventLog::open(config).unwrap();
         (log, temp_dir)
