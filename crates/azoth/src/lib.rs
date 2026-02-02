@@ -42,6 +42,7 @@ pub mod ipfs;
 pub mod ipfs_storage;
 pub mod migration;
 pub mod prelude;
+pub mod recovery_file;
 pub mod transaction;
 pub mod typed_values;
 
