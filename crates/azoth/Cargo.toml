@@ -50,7 +50,7 @@ tracing-subscriber = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 criterion = { version = "0.5", features = ["html_reports"] }
 parking_lot = "0.12"
-azoth-scheduler = { workspace = true }
+# azoth-scheduler = { workspace = true }  # Circular dependency - commented out for publishing
 
 [[example]]
 name = "checkpoint_service"
