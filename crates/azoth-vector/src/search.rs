@@ -278,7 +278,10 @@ mod tests {
 
         let config = azoth_core::ProjectionConfig {
             path: db_path.clone(),
-            ..Default::default()
+            wal_mode: true,
+            synchronous: azoth_core::config::SynchronousMode::Normal,
+            cache_size: -2000,
+            schema_version: 1,
         };
 
         let store = Arc::new(azoth_sqlite::SqliteProjectionStore::open(config).unwrap());
