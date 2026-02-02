@@ -392,6 +392,17 @@ impl EventLog for FileEventLog {
     }
 }
 
+/// Ensure metadata is saved on drop
+impl Drop for FileEventLog {
+    fn drop(&mut self) {
+        // Attempt to flush writer and save metadata on drop
+        // This ensures meta.json is written even if the user forgets to call sync()
+        if let Err(e) = self.sync() {
+            eprintln!("Warning: Failed to sync FileEventLog on drop: {}", e);
+        }
+    }
+}
+
 /// Iterator over events in file-based log
 struct FileEventLogIter {
     base_dir: PathBuf,
