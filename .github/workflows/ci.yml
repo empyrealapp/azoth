@@ -46,7 +46,9 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Run tests
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace
+        # azoth-vector integration tests need the sqlite-vector extension (has-vector-extension);
+        # run locally with: cargo test -p azoth-vector --features has-vector-extension
 
       - name: Run doctests
         run: cargo test --workspace --doc
