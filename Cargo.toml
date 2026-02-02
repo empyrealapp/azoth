@@ -10,6 +10,7 @@ members = [
     "crates/azoth-scheduler",
     "crates/azoth-cli",
     "crates/azoth-vector",
+    "crates/azoth-bus",
 ]
 
 [workspace.package]
@@ -87,4 +88,5 @@ azoth-file-log = { version = "0.1.1", path = "crates/azoth-file-log" }
 azoth-projector = { version = "0.1.1", path = "crates/azoth-projector" }
 azoth-scheduler = { version = "0.1.1", path = "crates/azoth-scheduler" }
 azoth-vector = { version = "0.1.1", path = "crates/azoth-vector" }
+azoth-bus = { version = "0.1.1", path = "crates/azoth-bus" }
 azoth = { version = "0.1.1", path = "crates/azoth" }

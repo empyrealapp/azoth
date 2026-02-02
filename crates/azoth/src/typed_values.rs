@@ -346,6 +346,72 @@ impl TypedValue {
         bincode::deserialize(bytes).map_err(|e| AzothError::Serialization(e.to_string()))
     }
 
+    /// Create a TypedValue from a JSON-serializable type
+    ///
+    /// Stores the value as JSON bytes in a Bytes variant.
+    /// This is useful for storing domain types (structs, enums) in the KV store.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use azoth::TypedValue;
+    /// use serde::{Serialize, Deserialize};
+    ///
+    /// #[derive(Serialize, Deserialize)]
+    /// struct User {
+    ///     id: String,
+    ///     name: String,
+    /// }
+    ///
+    /// let user = User {
+    ///     id: "user123".to_string(),
+    ///     name: "Alice".to_string(),
+    /// };
+    ///
+    /// let value = TypedValue::from_json(&user).unwrap();
+    /// ```
+    pub fn from_json<T: Serialize>(value: &T) -> Result<Self> {
+        let bytes =
+            serde_json::to_vec(value).map_err(|e| AzothError::Serialization(e.to_string()))?;
+        Ok(TypedValue::Bytes(bytes))
+    }
+
+    /// Extract a JSON-serializable type from a TypedValue
+    ///
+    /// Works with Bytes variant containing JSON data.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use azoth::TypedValue;
+    /// use serde::{Serialize, Deserialize};
+    ///
+    /// #[derive(Serialize, Deserialize, Debug, PartialEq)]
+    /// struct User {
+    ///     id: String,
+    ///     name: String,
+    /// }
+    ///
+    /// let user = User {
+    ///     id: "user123".to_string(),
+    ///     name: "Alice".to_string(),
+    /// };
+    ///
+    /// let value = TypedValue::from_json(&user).unwrap();
+    /// let decoded: User = value.to_json().unwrap();
+    /// assert_eq!(decoded, user);
+    /// ```
+    pub fn to_json<T: serde::de::DeserializeOwned>(&self) -> Result<T> {
+        match self {
+            TypedValue::Bytes(bytes) => {
+                serde_json::from_slice(bytes).map_err(|e| AzothError::Serialization(e.to_string()))
+            }
+            _ => Err(AzothError::InvalidState(
+                "TypedValue must be Bytes variant for JSON deserialization".into(),
+            )),
+        }
+    }
+
     /// Extract as U256
     pub fn as_u256(&self) -> Result<U256> {
         match self {
@@ -726,5 +792,106 @@ mod tests {
 
         // Should succeed with correct type
         assert!(set_u64.as_set_u64().is_ok());
+    }
+
+    #[test]
+    fn test_json_serialization() {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        struct User {
+            id: String,
+            name: String,
+            age: u32,
+        }
+
+        let user = User {
+            id: "user123".to_string(),
+            name: "Alice".to_string(),
+            age: 30,
+        };
+
+        // Serialize to TypedValue
+        let value = TypedValue::from_json(&user).unwrap();
+
+        // Should be Bytes variant
+        match &value {
+            TypedValue::Bytes(_) => {}
+            _ => panic!("Expected Bytes variant"),
+        }
+
+        // Deserialize back
+        let decoded: User = value.to_json().unwrap();
+        assert_eq!(decoded, user);
+    }
+
+    #[test]
+    fn test_json_roundtrip_complex() {
+        use serde::{Deserialize, Serialize};
+        use std::collections::HashMap;
+
+        #[derive(Serialize, Deserialize, Debug, PartialEq)]
+        struct Instance {
+            id: String,
+            state: HashMap<String, String>,
+            version: u64,
+            metadata: Option<String>,
+        }
+
+        let mut state = HashMap::new();
+        state.insert("key1".to_string(), "value1".to_string());
+        state.insert("key2".to_string(), "value2".to_string());
+
+        let instance = Instance {
+            id: "instance123".to_string(),
+            state,
+            version: 42,
+            metadata: Some("test metadata".to_string()),
+        };
+
+        // Round-trip
+        let value = TypedValue::from_json(&instance).unwrap();
+        let decoded: Instance = value.to_json().unwrap();
+
+        assert_eq!(decoded.id, instance.id);
+        assert_eq!(decoded.state, instance.state);
+        assert_eq!(decoded.version, instance.version);
+        assert_eq!(decoded.metadata, instance.metadata);
+    }
+
+    #[test]
+    fn test_json_type_safety() {
+        use serde::{Deserialize, Serialize};
+
+        #[derive(Serialize, Deserialize)]
+        struct User {
+            id: String,
+        }
+
+        #[derive(Deserialize)]
+        struct Post {
+            id: String,
+            title: String,
+        }
+
+        let user = User {
+            id: "user123".to_string(),
+        };
+
+        let value = TypedValue::from_json(&user).unwrap();
+
+        // Should fail when deserializing to wrong type
+        let result: Result<Post> = value.to_json();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_wrong_variant() {
+        // Create a non-Bytes variant
+        let value = TypedValue::I64(42);
+
+        // Should fail when trying to deserialize from non-Bytes
+        let result: Result<String> = value.to_json();
+        assert!(result.is_err());
     }
 }
