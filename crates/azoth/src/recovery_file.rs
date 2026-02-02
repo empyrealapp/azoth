@@ -60,6 +60,7 @@ pub struct RecoveryFile {
 /// use azoth::recovery_file::RecoveryFileManager;
 /// use azoth::checkpoint::CheckpointMetadata;
 /// use std::path::PathBuf;
+/// use chrono::Utc;
 ///
 /// let manager = RecoveryFileManager::new(PathBuf::from("/data"));
 ///
