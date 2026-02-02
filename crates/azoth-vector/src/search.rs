@@ -268,6 +268,7 @@ impl VectorSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use azoth_core::traits::ProjectionStore;
 
     #[test]
     fn test_search_builder() {
