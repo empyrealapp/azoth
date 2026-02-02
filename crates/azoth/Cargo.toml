@@ -44,6 +44,19 @@ uuid = { workspace = true }
 walkdir = { workspace = true }
 sha2 = { workspace = true }
 
+# Ethereum/blockchain support (optional, for onchain registry)
+alloy-primitives = { version = "0.8", optional = true }
+alloy-provider = { version = "0.6", optional = true, features = ["reqwest"] }
+alloy-rpc-types = { version = "0.6", optional = true }
+alloy-signer = { version = "0.6", optional = true }
+alloy-signer-local = { version = "0.6", optional = true }
+alloy-sol-types = { version = "0.8", optional = true }
+alloy-transport-http = { version = "0.6", optional = true }
+
+[features]
+default = []
+onchain = ["alloy-primitives", "alloy-provider", "alloy-rpc-types", "alloy-signer", "alloy-signer-local", "alloy-sol-types", "alloy-transport-http"]
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }
