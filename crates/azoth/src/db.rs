@@ -92,6 +92,25 @@ impl AzothDb {
         &self.projection
     }
 
+    /// Get the underlying SQLite connection for the projection store
+    ///
+    /// This returns a shared reference to the Mutex-protected connection,
+    /// allowing direct SQL access when needed (e.g., for legacy code that
+    /// expects `Arc<Mutex<Connection>>`).
+    ///
+    /// For new code, prefer using `query()`, `execute()`, or `transaction()`
+    /// methods which provide a safer closure-based API.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let conn = db.projection_connection();
+    /// let guard = conn.lock().unwrap();
+    /// guard.execute("INSERT INTO ...", params![])?;
+    /// ```
+    pub fn projection_connection(&self) -> &Arc<std::sync::Mutex<rusqlite::Connection>> {
+        self.projection.conn()
+    }
+
     /// Get reference to projector
     pub fn projector(&self) -> &Projector<LmdbCanonicalStore, SqliteProjectionStore> {
         &self.projector
