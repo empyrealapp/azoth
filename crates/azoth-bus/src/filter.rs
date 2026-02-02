@@ -10,30 +10,27 @@ impl Event {
     /// Decode from raw event bytes (format: "type:json_payload")
     ///
     /// The format from ctx.log is "event_type:json_payload" where json_payload
-    /// is the JSON-serialized form of the payload. Since JSON always starts with
-    /// a specific character (" for strings, { for objects, [ for arrays, etc.),
-    /// we can find the last ':' before valid JSON starts.
+    /// is the JSON-serialized form of the payload. Since event_type may contain
+    /// colons (e.g., "knowledge:fact_learned"), we need to find the LAST colon
+    /// that's followed by valid JSON by actually attempting to parse.
     pub fn decode(id: u64, bytes: &[u8]) -> crate::Result<Self> {
         let s = std::str::from_utf8(bytes)
             .map_err(|e| crate::BusError::InvalidState(format!("Invalid UTF-8 in event: {}", e)))?;
 
-        // Find the last ':' followed by JSON (starts with ", {, [, true, false, null, or digit)
-        if let Some(split_pos) = s.rfind(':') {
-            let event_type = &s[..split_pos];
+        // Find all colons and check which one precedes valid JSON
+        let colon_positions: Vec<usize> = s.char_indices()
+            .filter(|(_, c)| *c == ':')
+            .map(|(i, _)| i)
+            .collect();
+
+        // Check colons from last to first to find the split point
+        for &split_pos in colon_positions.iter().rev() {
             let payload = &s[split_pos + 1..];
 
-            // Verify payload looks like JSON
-            if payload.starts_with('"')
-                || payload.starts_with('{')
-                || payload.starts_with('[')
-                || payload.starts_with("true")
-                || payload.starts_with("false")
-                || payload.starts_with("null")
-                || payload
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_digit() || c == '-')
-            {
+            // Try to parse as JSON to verify this is the correct split point
+            // We don't care about the actual parsed value, just that it's valid JSON
+            if serde_json::from_str::<serde_json::Value>(payload).is_ok() {
+                let event_type = &s[..split_pos];
                 return Ok(Self {
                     id,
                     event_type: event_type.to_string(),
@@ -42,7 +39,7 @@ impl Event {
             }
         }
 
-        // Legacy format or malformed: entire content is the type
+        // No colon found or no valid JSON after any colon - legacy format
         Ok(Self {
             id,
             event_type: s.to_string(),
