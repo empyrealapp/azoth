@@ -147,20 +147,19 @@ pub struct OnChainRegistry {
 
 impl OnChainRegistry {
     /// Create with config and underlying storage
-    pub async fn new(
-        config: OnChainConfig,
-        storage: Box<dyn CheckpointStorage>,
-    ) -> Result<Self> {
+    pub async fn new(config: OnChainConfig, storage: Box<dyn CheckpointStorage>) -> Result<Self> {
         // Parse private key
         let private_key = config.private_key.trim_start_matches("0x");
         let signer = PrivateKeySigner::from_str(private_key)
             .map_err(|e| AzothError::Config(format!("Invalid private key: {}", e)))?;
 
         // Create provider
-        let provider = ProviderBuilder::new()
-            .on_http(config.rpc_url.parse().map_err(|e| {
-                AzothError::Config(format!("Invalid RPC URL: {}", e))
-            })?);
+        let provider = ProviderBuilder::new().on_http(
+            config
+                .rpc_url
+                .parse()
+                .map_err(|e| AzothError::Config(format!("Invalid RPC URL: {}", e)))?,
+        );
 
         Ok(Self {
             config,
@@ -181,7 +180,7 @@ impl OnChainRegistry {
     /// Uses keccak256 hash of the checkpoint ID
     fn backup_id_from_metadata(metadata: &CheckpointMetadata) -> FixedBytes<32> {
         use alloy_primitives::keccak256;
-        keccak256(metadata.id.as_bytes()).into()
+        keccak256(metadata.id.as_bytes())
     }
 
     /// Get user address (derived from signer)
@@ -228,9 +227,7 @@ impl CheckpointStorage for OnChainRegistry {
             .map_err(|e| AzothError::Backup(format!("Failed to send transaction: {}", e)))?
             .watch()
             .await
-            .map_err(|e| {
-                AzothError::Backup(format!("Transaction failed: {}", e))
-            })?;
+            .map_err(|e| AzothError::Backup(format!("Transaction failed: {}", e)))?;
 
         tracing::info!(
             "Backup registered on-chain: tx={:?}, backup_id={:?}",
@@ -284,7 +281,10 @@ impl CheckpointStorage for OnChainRegistry {
         // For each backup ID, get the details
         let mut metadata_list = Vec::new();
         for backup_id in backup_ids {
-            let call = getBackupCall { user, backupId: backup_id };
+            let call = getBackupCall {
+                user,
+                backupId: backup_id,
+            };
             let calldata = call.abi_encode();
 
             let tx = TransactionRequest::default()
@@ -332,8 +332,14 @@ mod tests {
     fn test_config_from_env() {
         use std::env;
 
-        env::set_var("BACKUP_REGISTRY_ADDRESS", "0x1234567890123456789012345678901234567890");
-        env::set_var("BACKUP_REGISTRY_RPC_URL", "https://sepolia.infura.io/v3/test");
+        env::set_var(
+            "BACKUP_REGISTRY_ADDRESS",
+            "0x1234567890123456789012345678901234567890",
+        );
+        env::set_var(
+            "BACKUP_REGISTRY_RPC_URL",
+            "https://sepolia.infura.io/v3/test",
+        );
         env::set_var("BACKUP_REGISTRY_CHAIN_ID", "11155111");
         env::set_var(
             "BACKUP_REGISTRY_PRIVATE_KEY",

@@ -57,6 +57,11 @@ env/
 /tmp/
 *.env
 .env.*
+.env
 
 # sqlite-vector extension
 vector.dylib
+
+
+# library files
+contracts/**/lib/

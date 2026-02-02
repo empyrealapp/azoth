@@ -7,6 +7,9 @@ import {BackupRegistry} from "../src/BackupRegistry.sol";
 contract BackupRegistryTest is Test {
     BackupRegistry public backupRegistry;
 
+    // Same signature as BackupRegistry.BackupSubmitted for vm.expectEmit
+    event BackupSubmitted(address indexed user, bytes32 indexed backupId, string ipfsHash, uint256 timestamp);
+
     address public user1 = address(0x1);
     address public user2 = address(0x2);
     string public constant IPFS_HASH = "QmTestHash123456789";
@@ -20,7 +23,7 @@ contract BackupRegistryTest is Test {
         bytes32 backupId = keccak256("test-backup-1");
 
         vm.expectEmit(true, true, false, true);
-        emit BackupRegistry.BackupSubmitted(user1, backupId, IPFS_HASH, block.timestamp);
+        emit BackupSubmitted(user1, backupId, IPFS_HASH, block.timestamp);
 
         vm.prank(user1);
         backupRegistry.submitBackup(backupId, IPFS_HASH);
