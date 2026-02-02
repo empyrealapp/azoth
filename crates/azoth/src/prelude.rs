@@ -38,7 +38,7 @@ pub use crate::{
 };
 
 // Migrations
-pub use crate::{Migration, MigrationManager};
+pub use crate::{FileMigration, Migration, MigrationHistoryEntry, MigrationInfo, MigrationManager};
 
 // Transaction API
 pub use crate::{PreflightContext, Transaction, TransactionContext};

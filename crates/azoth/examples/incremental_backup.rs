@@ -154,7 +154,7 @@ async fn main() -> Result<()> {
         backup3.from_event,
         backup3.to_event
     );
-    tracing::info!();
+    tracing::info!("");
     tracing::info!("To restore to any event ID, the system would:");
     tracing::info!("  1. Find the base full backup");
     tracing::info!("  2. Apply incremental backups in order");
@@ -169,7 +169,7 @@ async fn main() -> Result<()> {
         backup2.from_event,
         target_event
     );
-    tracing::info!();
+    tracing::info!("");
 
     tracing::info!("=== Summary ===\n");
 
