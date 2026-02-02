@@ -102,7 +102,10 @@ impl RecoveryFileManager {
     ///
     /// Useful if you want to track multiple backup streams or use a different naming convention.
     pub fn with_filename(base_path: PathBuf, filename: String) -> Self {
-        Self { base_path, filename }
+        Self {
+            base_path,
+            filename,
+        }
     }
 
     /// Get the full path to the recovery file
@@ -170,8 +173,13 @@ impl RecoveryFileManager {
             .map_err(|e| AzothError::Serialization(e.to_string()))?;
         std::fs::write(&path, json)?;
 
-        tracing::info!("Wrote recovery file with {} components to {}",
-            recovery.component_backups.as_ref().map(|c| c.len()).unwrap_or(0),
+        tracing::info!(
+            "Wrote recovery file with {} components to {}",
+            recovery
+                .component_backups
+                .as_ref()
+                .map(|c| c.len())
+                .unwrap_or(0),
             path.display()
         );
         Ok(())
@@ -188,8 +196,8 @@ impl RecoveryFileManager {
     pub fn read(&self) -> Result<RecoveryFile> {
         let path = self.file_path();
         let json = std::fs::read_to_string(&path)?;
-        let recovery: RecoveryFile = serde_json::from_str(&json)
-            .map_err(|e| AzothError::Serialization(e.to_string()))?;
+        let recovery: RecoveryFile =
+            serde_json::from_str(&json).map_err(|e| AzothError::Serialization(e.to_string()))?;
         Ok(recovery)
     }
 
@@ -219,8 +227,8 @@ impl RecoveryFileManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
     use chrono::Utc;
+    use tempfile::TempDir;
 
     #[test]
     fn test_write_and_read() {
@@ -266,11 +274,20 @@ mod tests {
         components.insert("database1".to_string(), "QmDb1".to_string());
         components.insert("database2".to_string(), "QmDb2".to_string());
 
-        manager.write_with_components(&metadata, components).unwrap();
+        manager
+            .write_with_components(&metadata, components)
+            .unwrap();
 
         let recovery = manager.read().unwrap();
         assert_eq!(recovery.component_backups.as_ref().unwrap().len(), 2);
-        assert_eq!(recovery.component_backups.as_ref().unwrap().get("database1"), Some(&"QmDb1".to_string()));
+        assert_eq!(
+            recovery
+                .component_backups
+                .as_ref()
+                .unwrap()
+                .get("database1"),
+            Some(&"QmDb1".to_string())
+        );
     }
 
     #[test]
@@ -278,7 +295,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let manager = RecoveryFileManager::with_filename(
             temp_dir.path().to_path_buf(),
-            "custom_recovery.json".to_string()
+            "custom_recovery.json".to_string(),
         );
 
         let metadata = CheckpointMetadata {
