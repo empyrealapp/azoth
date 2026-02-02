@@ -1,0 +1,9 @@
+---
+alwaysApply: true
+fileGlobs:
+  - "script/**/*.s.sol"
+---
+
+When you run the deployment script, it should output the addresses of the contracts to the console so these can be stored in a JSON file for utilization during development, or to track them after the production deployment.
+
+This will be handled by the deployment script in scripts/deploy-local.sh.

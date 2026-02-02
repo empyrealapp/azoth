@@ -41,6 +41,8 @@ pub mod incremental_backup;
 pub mod ipfs;
 pub mod ipfs_storage;
 pub mod migration;
+#[cfg(feature = "onchain")]
+pub mod onchain_registry;
 pub mod prelude;
 pub mod recovery_file;
 pub mod transaction;
