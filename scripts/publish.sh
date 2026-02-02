@@ -26,22 +26,25 @@ publish_crate() {
 }
 
 # 1. Publish core
-echo -e "${BLUE}Step 1/4: Publishing core crate${NC}"
+echo -e "${BLUE}Step 1/5: Publishing core crate${NC}"
 publish_crate "azoth-core"
 
-# 2. Publish storage backends and projector (these can be done in parallel but we'll do sequentially for safety)
-echo -e "${BLUE}Step 2/4: Publishing storage backends and projector${NC}"
-publish_crate "azoth-lmdb"
-publish_crate "azoth-sqlite"
+# 2. Publish file-log, sqlite, and projector (only depend on core)
+echo -e "${BLUE}Step 2/5: Publishing file-log, sqlite, and projector${NC}"
 publish_crate "azoth-file-log"
+publish_crate "azoth-sqlite"
 publish_crate "azoth-projector"
 
-# 3. Publish main crate
-echo -e "${BLUE}Step 3/4: Publishing main crate${NC}"
+# 3. Publish lmdb (depends on core and file-log)
+echo -e "${BLUE}Step 3/5: Publishing lmdb${NC}"
+publish_crate "azoth-lmdb"
+
+# 4. Publish main crate
+echo -e "${BLUE}Step 4/5: Publishing main crate${NC}"
 publish_crate "azoth"
 
-# 4. Publish scheduler and CLI
-echo -e "${BLUE}Step 4/4: Publishing scheduler and CLI${NC}"
+# 5. Publish scheduler and CLI
+echo -e "${BLUE}Step 5/5: Publishing scheduler and CLI${NC}"
 publish_crate "azoth-scheduler"
 publish_crate "azoth-cli"
 
