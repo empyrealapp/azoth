@@ -64,14 +64,16 @@ pub fn create_vector_table(
     conn.execute(&format!("CREATE TABLE {} ({})", table_name, schema), [])
         .map_err(|e| AzothError::Projection(format!("Failed to create table: {}", e)))?;
 
-    // Initialize vector column
+    // Initialize vector column (SELECT returns a row)
     let config_str = config.to_config_string();
-    conn.execute(
+    conn.query_row(
         &format!(
             "SELECT vector_init('{}', '{}', ?)",
-            table_name, vector_column
+            table_name.replace('\'', "''"),
+            vector_column.replace('\'', "''")
         ),
         [&config_str],
+        |_row| Ok(()),
     )
     .map_err(|e| AzothError::Projection(format!("Failed to init vector column: {}", e)))?;
 

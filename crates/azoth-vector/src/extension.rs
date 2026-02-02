@@ -137,13 +137,14 @@ impl VectorExtension for azoth_sqlite::SqliteProjectionStore {
         let conn = self.conn().lock().unwrap();
         let config_str = config.to_config_string();
 
-        conn.execute(
+        conn.query_row(
             &format!(
                 "SELECT vector_init('{}', '{}', ?)",
                 table.replace('\'', "''"),
                 column.replace('\'', "''")
             ),
             [&config_str],
+            |_row| Ok(()),
         )
         .map_err(|e| {
             AzothError::Projection(format!(
