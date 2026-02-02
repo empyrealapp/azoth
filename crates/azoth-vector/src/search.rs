@@ -16,11 +16,11 @@ use std::sync::Arc;
 /// use azoth::prelude::*;
 /// use azoth_vector::{VectorSearch, Vector, DistanceMetric};
 ///
-/// # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+/// # async fn example() -> Result<()> {
 /// let db = AzothDb::open("./data")?;
 ///
 /// let query = Vector::new(vec![0.1, 0.2, 0.3]);
-/// let search = VectorSearch::new(db.projection(), "embeddings", "vector")
+/// let search = VectorSearch::new(db.projection().clone(), "embeddings", "vector")
 ///     .distance_metric(DistanceMetric::Cosine);
 ///
 /// let results = search.knn(&query, 10).await?;
@@ -190,10 +190,8 @@ impl VectorSearch {
                     filter
                 );
 
-                let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = vec![
-                    Box::new(query_json),
-                    Box::new(k_i64),
-                ];
+                let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> =
+                    vec![Box::new(query_json), Box::new(k_i64)];
                 for p in filter_params {
                     params_vec.push(Box::new(p));
                 }
@@ -226,19 +224,20 @@ impl VectorSearch {
     ///
     /// ```no_run
     /// # use azoth_vector::{VectorSearch, Vector};
-    /// # async fn example(search: VectorSearch) -> Result<(), Box<dyn std::error::Error>> {
+    /// # use azoth_core::Result;
+    /// # async fn example(search: VectorSearch) -> Result<()> {
     /// let query = Vector::new(vec![0.1, 0.2, 0.3]);
     /// let results = search.knn(&query, 10).await?;
     ///
     /// // Get full records
     /// for result in results {
-    ///     let record: String = search.projection
-    ///         .query(|conn| {
+    ///     let record: String = search.projection()
+    ///         .query(|conn: &rusqlite::Connection| {
     ///             conn.query_row(
     ///                 "SELECT content FROM embeddings WHERE rowid = ?",
     ///                 [result.rowid],
-    ///                 |row| row.get(0),
-    ///             )
+    ///                 |row: &rusqlite::Row| row.get(0),
+    ///             ).map_err(|e| azoth_core::error::AzothError::Projection(e.to_string()))
     ///         })?;
     ///     println!("Distance: {}, Content: {}", result.distance, record);
     /// }
@@ -286,8 +285,8 @@ mod tests {
 
         let store = Arc::new(azoth_sqlite::SqliteProjectionStore::open(config).unwrap());
 
-        let search = VectorSearch::new(store.clone(), "test", "vector")
-            .distance_metric(DistanceMetric::L2);
+        let search =
+            VectorSearch::new(store.clone(), "test", "vector").distance_metric(DistanceMetric::L2);
 
         assert_eq!(search.table(), "test");
         assert_eq!(search.column(), "vector");

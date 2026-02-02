@@ -9,7 +9,7 @@ use std::path::Path;
 ///
 /// The extension binary should be available at the given path.
 /// Pre-built binaries can be downloaded from:
-/// https://github.com/sqliteai/sqlite-vector/releases
+/// <https://github.com/sqliteai/sqlite-vector/releases>
 ///
 /// # Platform-specific defaults
 ///
@@ -46,14 +46,13 @@ pub fn load_vector_extension(conn: &Connection, path: Option<&Path>) -> Result<(
         let _guard = rusqlite::LoadExtensionGuard::new(conn)
             .map_err(|e| AzothError::Projection(format!("Failed to enable extensions: {}", e)))?;
 
-        conn.load_extension(ext_path, None)
-            .map_err(|e| {
-                AzothError::Projection(format!(
-                    "Failed to load vector extension from {}: {}",
-                    ext_path.display(),
-                    e
-                ))
-            })?;
+        conn.load_extension(ext_path, None).map_err(|e| {
+            AzothError::Projection(format!(
+                "Failed to load vector extension from {}: {}",
+                ext_path.display(),
+                e
+            ))
+        })?;
     }
 
     tracing::info!("Loaded sqlite-vector extension successfully");
@@ -70,7 +69,7 @@ pub trait VectorExtension {
     /// use azoth::prelude::*;
     /// use azoth_vector::VectorExtension;
     ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn example() -> Result<()> {
     /// let db = AzothDb::open("./data")?;
     /// db.projection().load_vector_extension(None)?;
     /// # Ok(())
@@ -88,21 +87,19 @@ pub trait VectorExtension {
     /// use azoth::prelude::*;
     /// use azoth_vector::{VectorExtension, VectorConfig};
     ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
-    /// let db = AzothDb::open("./data")?;
-    /// db.projection().load_vector_extension(None)?;
-    ///
+    /// # fn example() -> Result<()> {
+    /// # let db = AzothDb::open("./data")?;
+    /// # db.projection().load_vector_extension(None)?;
     /// // Create table with BLOB column
-    /// db.projection().execute(|conn| {
-    ///     conn.execute(
-    ///         "CREATE TABLE embeddings (id INTEGER PRIMARY KEY, vector BLOB)",
-    ///         [],
-    ///     )?;
-    ///     Ok(())
-    /// })?;
-    ///
+    /// # db.projection().execute(|conn: &rusqlite::Connection| {
+    /// #     conn.execute(
+    /// #         "CREATE TABLE embeddings (id INTEGER PRIMARY KEY, vector BLOB)",
+    /// #         [],
+    /// #     ).map_err(|e| azoth::AzothError::Projection(e.to_string()))?;
+    /// #     Ok(())
+    /// # })?;
     /// // Initialize vector column
-    /// db.projection().vector_init("embeddings", "vector", VectorConfig::default())?;
+    /// # db.projection().vector_init("embeddings", "vector", VectorConfig::default())?;
     /// # Ok(())
     /// # }
     /// ```
@@ -116,9 +113,8 @@ pub trait VectorExtension {
     /// use azoth::prelude::*;
     /// use azoth_vector::VectorExtension;
     ///
-    /// # fn example() -> Result<(), Box<dyn std::error::Error>> {
+    /// # fn example() -> Result<()> {
     /// let db = AzothDb::open("./data")?;
-    ///
     /// if !db.projection().has_vector_support() {
     ///     db.projection().load_vector_extension(None)?;
     /// }
@@ -175,9 +171,7 @@ impl VectorExtension for azoth_sqlite::SqliteProjectionStore {
         let conn = self.conn().lock().unwrap();
         let version: String = conn
             .query_row("SELECT vector_version()", [], |row| row.get(0))
-            .map_err(|e| {
-                AzothError::Projection(format!("Failed to get vector version: {}", e))
-            })?;
+            .map_err(|e| AzothError::Projection(format!("Failed to get vector version: {}", e)))?;
         Ok(version)
     }
 }
