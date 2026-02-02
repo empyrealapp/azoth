@@ -373,4 +373,61 @@ mod tests {
         assert_eq!(c1.position().unwrap(), Some(0));
         assert_eq!(c2.position().unwrap(), Some(1));
     }
+
+    #[test]
+    fn test_consumer_catches_new_events() {
+        let (db, _temp) = test_db();
+
+        // Create consumer first (no events yet)
+        let mut consumer = test_consumer(db.clone(), "test", "c1").unwrap();
+
+        // Consumer should see no events initially
+        assert!(consumer.next().unwrap().is_none());
+
+        // Publish events AFTER consumer is created
+        publish_event(&db, "test:event1", "data1").unwrap();
+        publish_event(&db, "test:event2", "data2").unwrap();
+
+        // Consumer should now see the new events
+        let event1 = consumer.next().unwrap();
+        assert!(event1.is_some(), "Consumer should catch events published after creation");
+        let event1 = event1.unwrap();
+        assert_eq!(event1.event_type, "test:event1");
+        consumer.ack(event1.id).unwrap();
+
+        let event2 = consumer.next().unwrap().unwrap();
+        assert_eq!(event2.event_type, "test:event2");
+        consumer.ack(event2.id).unwrap();
+
+        assert!(consumer.next().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_consumer_polling_loop_catches_events() {
+        let (db, _temp) = test_db();
+
+        // Create consumer first (no events yet)
+        let mut consumer = test_consumer(db.clone(), "test", "c1").unwrap();
+
+        // Start a polling loop (similar to projector behavior)
+        let mut found_event = false;
+        for iteration in 0..50 {
+            if iteration == 10 {
+                // Publish event during polling loop
+                publish_event(&db, "test:event1", "data1").unwrap();
+            }
+
+            if let Some(event) = consumer.next().unwrap() {
+                assert_eq!(event.event_type, "test:event1");
+                consumer.ack(event.id).unwrap();
+                found_event = true;
+                break;
+            }
+
+            // Small sleep to simulate polling interval
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        assert!(found_event, "Consumer polling loop should catch event published during polling");
+    }
 }
