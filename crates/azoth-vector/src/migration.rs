@@ -17,7 +17,7 @@ use rusqlite::Connection;
 ///
 /// struct CreateEmbeddingsTable;
 ///
-/// impl Migration for CreateEmbeddingsTable {
+/// impl azoth::Migration for CreateEmbeddingsTable {
 ///     fn version(&self) -> u32 { 2 }
 ///     fn name(&self) -> &str { "create_embeddings_table" }
 ///
@@ -33,7 +33,8 @@ use rusqlite::Connection;
 ///     }
 ///
 ///     fn down(&self, conn: &Connection) -> Result<()> {
-///         conn.execute("DROP TABLE embeddings", [])?;
+///         conn.execute("DROP TABLE embeddings", [])
+///             .map_err(|e| azoth::AzothError::Projection(e.to_string()))?;
 ///         Ok(())
 ///     }
 /// }
@@ -72,9 +73,7 @@ pub fn create_vector_table(
         ),
         [&config_str],
     )
-    .map_err(|e| {
-        AzothError::Projection(format!("Failed to init vector column: {}", e))
-    })?;
+    .map_err(|e| AzothError::Projection(format!("Failed to init vector column: {}", e)))?;
 
     tracing::info!(
         "Created table {} with vector column {} ({})",
@@ -99,7 +98,7 @@ pub fn create_vector_table(
 ///
 /// struct AddVectorToExistingTable;
 ///
-/// impl Migration for AddVectorToExistingTable {
+/// impl azoth::Migration for AddVectorToExistingTable {
 ///     fn version(&self) -> u32 { 3 }
 ///     fn name(&self) -> &str { "add_vector_column" }
 ///
@@ -142,10 +141,7 @@ pub fn add_vector_column(
 
     // Add BLOB column
     conn.execute(
-        &format!(
-            "ALTER TABLE {} ADD COLUMN {} BLOB",
-            table_name, column_name
-        ),
+        &format!("ALTER TABLE {} ADD COLUMN {} BLOB", table_name, column_name),
         [],
     )
     .map_err(|e| AzothError::Projection(format!("Failed to add column: {}", e)))?;
@@ -153,15 +149,10 @@ pub fn add_vector_column(
     // Initialize vector column
     let config_str = config.to_config_string();
     conn.execute(
-        &format!(
-            "SELECT vector_init('{}', '{}', ?)",
-            table_name, column_name
-        ),
+        &format!("SELECT vector_init('{}', '{}', ?)", table_name, column_name),
         [&config_str],
     )
-    .map_err(|e| {
-        AzothError::Projection(format!("Failed to init vector column: {}", e))
-    })?;
+    .map_err(|e| AzothError::Projection(format!("Failed to init vector column: {}", e)))?;
 
     tracing::info!(
         "Added vector column {}.{} ({})",
@@ -186,8 +177,7 @@ fn is_valid_identifier(name: &str) -> bool {
         return false;
     }
 
-    name.chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '_')
+    name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 #[cfg(test)]

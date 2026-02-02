@@ -18,7 +18,7 @@
 //! use azoth::prelude::*;
 //! use azoth_vector::{VectorExtension, Vector, VectorSearch, VectorConfig, DistanceMetric};
 //!
-//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! # async fn example() -> Result<()> {
 //! // Initialize Azoth with vector support
 //! let db = AzothDb::open("./data")?;
 //! db.projection().load_vector_extension(None)?;
@@ -32,17 +32,17 @@
 //!
 //! // Insert vectors
 //! let vector = Vector::new(vec![0.1, 0.2, 0.3]);
-//! db.projection().transaction(|txn| {
+//! db.projection().transaction(|txn: &rusqlite::Transaction| {
 //!     txn.execute(
 //!         "INSERT INTO embeddings (id, vector) VALUES (?, ?)",
 //!         rusqlite::params![1, vector.to_blob()],
-//!     )?;
+//!     ).map_err(|e| azoth::AzothError::Projection(e.to_string()))?;
 //!     Ok(())
 //! })?;
 //!
 //! // Search for similar vectors
 //! let query = Vector::new(vec![0.15, 0.25, 0.35]);
-//! let search = VectorSearch::new(db.projection(), "embeddings", "vector");
+//! let search = VectorSearch::new(db.projection().clone(), "embeddings", "vector");
 //! let results = search.knn(&query, 10).await?;
 //! # Ok(())
 //! # }

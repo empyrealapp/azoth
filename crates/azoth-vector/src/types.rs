@@ -3,9 +3,10 @@
 use serde::{Deserialize, Serialize};
 
 /// Vector data types supported by sqlite-vector
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum VectorType {
     /// 32-bit floating point (default)
+    #[default]
     Float32,
     /// 16-bit floating point
     Float16,
@@ -32,14 +33,8 @@ impl std::fmt::Display for VectorType {
     }
 }
 
-impl Default for VectorType {
-    fn default() -> Self {
-        VectorType::Float32
-    }
-}
-
 /// Distance metrics for similarity search
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum DistanceMetric {
     /// Euclidean distance (L2 norm)
     L2,
@@ -48,6 +43,7 @@ pub enum DistanceMetric {
     /// Manhattan distance (L1 norm)
     L1,
     /// Cosine similarity (angle between vectors)
+    #[default]
     Cosine,
     /// Dot product (for normalized vectors)
     DotProduct,
@@ -65,12 +61,6 @@ impl std::fmt::Display for DistanceMetric {
             DistanceMetric::DotProduct => write!(f, "dot"),
             DistanceMetric::Hamming => write!(f, "hamming"),
         }
-    }
-}
-
-impl Default for DistanceMetric {
-    fn default() -> Self {
-        DistanceMetric::Cosine
     }
 }
 
@@ -131,15 +121,12 @@ impl Vector {
     ///
     /// Stores as little-endian f32 values
     pub fn to_blob(&self) -> Vec<u8> {
-        self.data
-            .iter()
-            .flat_map(|f| f.to_le_bytes())
-            .collect()
+        self.data.iter().flat_map(|f| f.to_le_bytes()).collect()
     }
 
     /// Deserialize from BLOB
     pub fn from_blob(blob: &[u8]) -> Result<Self, String> {
-        if blob.len() % 4 != 0 {
+        if !blob.len().is_multiple_of(4) {
             return Err(format!(
                 "Invalid blob length {} for f32 vector (must be multiple of 4)",
                 blob.len()

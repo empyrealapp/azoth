@@ -241,9 +241,9 @@ mod with_extension {
 
         // Insert vectors with varying distances
         let vectors = vec![
-            vec![1.0, 0.0, 0.0],   // distance ~0.1 from query
-            vec![0.5, 0.5, 0.0],   // distance ~0.3 from query
-            vec![0.0, 1.0, 0.0],   // distance ~0.9 from query
+            vec![1.0, 0.0, 0.0], // distance ~0.1 from query
+            vec![0.5, 0.5, 0.0], // distance ~0.3 from query
+            vec![0.0, 1.0, 0.0], // distance ~0.9 from query
         ];
 
         for (i, vector) in vectors.iter().enumerate() {
