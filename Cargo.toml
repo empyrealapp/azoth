@@ -8,6 +8,7 @@ members = [
     "crates/azoth-projector",
     "crates/azoth",
     "crates/azoth-scheduler",
+    "crates/azoth-cli",
 ]
 
 [workspace.package]

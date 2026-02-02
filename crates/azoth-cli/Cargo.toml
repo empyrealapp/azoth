@@ -1,0 +1,24 @@
+[package]
+name = "azoth-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Command-line interface for Azoth database"
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
+
+[[bin]]
+name = "azoth"
+path = "src/main.rs"
+
+[dependencies]
+azoth = { workspace = true }
+anyhow = { workspace = true }
+clap = { version = "4.5", features = ["derive", "cargo", "env"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
