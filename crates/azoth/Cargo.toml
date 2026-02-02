@@ -56,6 +56,10 @@ azoth-scheduler = { workspace = true }
 name = "checkpoint_service"
 required-features = []
 
+[[example]]
+name = "migration_example"
+required-features = []
+
 [[bench]]
 name = "transaction_throughput"
 harness = false

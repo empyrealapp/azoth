@@ -13,7 +13,10 @@
 //!
 //! # async fn example() -> Result<()> {
 //! let db = Arc::new(AzothDb::open("./data")?);
-//! let conn = Arc::new(rusqlite::Connection::open("./data/projection.db")?);
+//! let conn = Arc::new(
+//!     rusqlite::Connection::open("./data/projection.db")
+//!         .map_err(|e| AzothError::Projection(e.to_string()))?
+//! );
 //! let dlq = Arc::new(DeadLetterQueue::new(conn.clone())?);
 //! let registry = Arc::new(EventHandlerRegistry::new());
 //!
@@ -33,10 +36,9 @@
 //!
 //! let replayer = Arc::new(DlqReplayer::new(dlq, registry, config));
 //!
-//! // Run in background
-//! tokio::spawn(async move {
-//!     replayer.run().await
-//! });
+//! // Run replayer (in a real application, run this in a dedicated thread)
+//! // Note: replayer.run() must be called from a thread that owns the Connection
+//! // since rusqlite::Connection is not Send
 //! # Ok(())
 //! # }
 //! ```
