@@ -2,6 +2,12 @@
 name = "azoth-scheduler"
 version.workspace = true
 edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Task scheduler for Azoth database with cron support"
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 
 [dependencies]
 azoth-core = { workspace = true }
@@ -21,3 +27,4 @@ uuid = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
