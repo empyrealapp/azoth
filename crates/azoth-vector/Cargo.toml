@@ -8,6 +8,11 @@ repository = "https://github.com/your-org/azoth"
 keywords = ["database", "event-sourcing", "vector", "similarity-search", "embeddings"]
 categories = ["database"]
 
+[features]
+default = []
+# Enable integration tests that load the sqlite-vector extension (downloads from GitHub if needed)
+has-vector-extension = []
+
 [dependencies]
 azoth-core = { path = "../azoth-core" }
 azoth-sqlite = { path = "../azoth-sqlite" }
@@ -21,3 +26,8 @@ tracing = "0.1"
 azoth = { path = "../azoth" }
 tempfile = "3.0"
 tokio = { version = "1", features = ["full"] }
+# For downloading sqlite-vector extension in integration tests (blocking only, no tokio)
+ureq = { version = "2", default-features = false, features = ["native-tls"] }
+zip = "2"
+tar = "0.4"
+flate2 = "1.0"
