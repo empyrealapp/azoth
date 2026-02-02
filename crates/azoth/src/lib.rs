@@ -86,6 +86,8 @@ pub use incremental_backup::{
 };
 pub use ipfs::{IpfsClient, IpfsProvider};
 pub use ipfs_storage::IpfsStorage;
-pub use migration::{Migration, MigrationManager};
+pub use migration::{
+    FileMigration, Migration, MigrationHistoryEntry, MigrationInfo, MigrationManager,
+};
 pub use transaction::{PreflightContext, Transaction, TransactionContext};
 pub use typed_values::{Array, Set, TypedValue, I256, U256};
