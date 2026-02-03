@@ -53,7 +53,7 @@ impl ConsumerGroup {
         lease_duration: Duration,
     ) -> Self {
         // Auto-filter to stream prefix
-        let filter = EventFilter::prefix(&format!("{}:", stream));
+        let filter = EventFilter::prefix(format!("{}:", stream));
 
         Self {
             db,
@@ -342,14 +342,12 @@ impl GroupMember {
 
                 if !success {
                     // Nack - add to reclaim list
-                    let mut events: Vec<u64> = if let Some(value) = ctx.get_opt(&reclaim_key)? {
-                        if let TypedValue::Bytes(json_bytes) = value {
-                            serde_json::from_slice(&json_bytes).map_err(|e| {
-                                anyhow::anyhow!("Failed to parse reclaim list: {}", e)
-                            })?
-                        } else {
-                            Vec::new()
-                        }
+                    let mut events: Vec<u64> = if let Some(TypedValue::Bytes(json_bytes)) =
+                        ctx.get_opt(&reclaim_key)?
+                    {
+                        serde_json::from_slice(&json_bytes).map_err(|e| {
+                            anyhow::anyhow!("Failed to parse reclaim list: {}", e)
+                        })?
                     } else {
                         Vec::new()
                     };
@@ -412,16 +410,13 @@ impl GroupMember {
             .write_keys(write_keys)
             .execute(|ctx| {
                 // Load current reclaim list
-                let mut reclaim_list: Vec<u64> = if let Some(value) = ctx.get_opt(&reclaim_key)? {
-                    if let TypedValue::Bytes(json_bytes) = value {
+                let mut reclaim_list: Vec<u64> =
+                    if let Some(TypedValue::Bytes(json_bytes)) = ctx.get_opt(&reclaim_key)? {
                         serde_json::from_slice(&json_bytes)
                             .map_err(|e| anyhow::anyhow!("Failed to parse reclaim list: {}", e))?
                     } else {
                         Vec::new()
-                    }
-                } else {
-                    Vec::new()
-                };
+                    };
 
                 // Delete claims and add to reclaim list
                 for (claim_key, event_id) in expired {
