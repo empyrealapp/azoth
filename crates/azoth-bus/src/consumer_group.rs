@@ -345,9 +345,8 @@ impl GroupMember {
                     let mut events: Vec<u64> = if let Some(TypedValue::Bytes(json_bytes)) =
                         ctx.get_opt(&reclaim_key)?
                     {
-                        serde_json::from_slice(&json_bytes).map_err(|e| {
-                            anyhow::anyhow!("Failed to parse reclaim list: {}", e)
-                        })?
+                        serde_json::from_slice(&json_bytes)
+                            .map_err(|e| anyhow::anyhow!("Failed to parse reclaim list: {}", e))?
                     } else {
                         Vec::new()
                     };

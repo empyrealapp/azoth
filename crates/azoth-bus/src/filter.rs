@@ -18,7 +18,8 @@ impl Event {
             .map_err(|e| crate::BusError::InvalidState(format!("Invalid UTF-8 in event: {}", e)))?;
 
         // Find all colons and check which one precedes valid JSON
-        let colon_positions: Vec<usize> = s.char_indices()
+        let colon_positions: Vec<usize> = s
+            .char_indices()
             .filter(|(_, c)| *c == ':')
             .map(|(i, _)| i)
             .collect();
