@@ -390,7 +390,10 @@ mod tests {
 
         // Consumer should now see the new events
         let event1 = consumer.next().unwrap();
-        assert!(event1.is_some(), "Consumer should catch events published after creation");
+        assert!(
+            event1.is_some(),
+            "Consumer should catch events published after creation"
+        );
         let event1 = event1.unwrap();
         assert_eq!(event1.event_type, "test:event1");
         consumer.ack(event1.id).unwrap();
@@ -428,6 +431,9 @@ mod tests {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        assert!(found_event, "Consumer polling loop should catch event published during polling");
+        assert!(
+            found_event,
+            "Consumer polling loop should catch event published during polling"
+        );
     }
 }
