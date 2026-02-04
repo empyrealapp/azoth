@@ -14,7 +14,7 @@
 //!
 //! impl Migration for CreateAccountsTable {
 //!     fn version(&self) -> u32 {
-//!         2
+//!         1  // First migration starts at version 1
 //!     }
 //!
 //!     fn name(&self) -> &str {
@@ -64,7 +64,7 @@ use std::sync::Arc;
 pub trait Migration: Send + Sync {
     /// The version number this migration targets
     ///
-    /// Versions should be sequential starting from 2 (version 1 is the base schema).
+    /// Versions should be sequential starting from 1.
     fn version(&self) -> u32;
 
     /// Human-readable name for this migration
@@ -256,9 +256,9 @@ impl MigrationManager {
     pub fn rollback_last(&self, projection: &Arc<crate::SqliteProjectionStore>) -> Result<()> {
         let current_version = projection.schema_version()?;
 
-        if current_version <= 1 {
+        if current_version == 0 {
             return Err(AzothError::InvalidState(
-                "Cannot rollback base schema".into(),
+                "Cannot rollback: no migrations have been applied".into(),
             ));
         }
 
@@ -364,13 +364,13 @@ impl MigrationManager {
         fs::create_dir_all(migrations_dir)
             .map_err(|e| AzothError::Projection(format!("Failed to create directory: {}", e)))?;
 
-        // Find next version number
+        // Find next version number (starts at 1 if no migrations exist)
         let next_version = self
             .migrations
             .iter()
             .map(|m| m.version())
             .max()
-            .unwrap_or(1)
+            .unwrap_or(0)
             + 1;
 
         // Create filename
@@ -582,7 +582,7 @@ mod tests {
 
     impl Migration for TestMigration {
         fn version(&self) -> u32 {
-            2
+            1  // First migration starts at version 1
         }
 
         fn name(&self) -> &str {
@@ -601,7 +601,7 @@ mod tests {
 
         let migrations = manager.list();
         assert_eq!(migrations.len(), 1);
-        assert_eq!(migrations[0].version, 2);
+        assert_eq!(migrations[0].version, 1);
         assert_eq!(migrations[0].name, "test_migration");
     }
 }
