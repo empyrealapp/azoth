@@ -2,6 +2,11 @@ use azoth_core::{error::Result, traits::StateIter, AzothError};
 use lmdb::{Cursor, Database, Environment, Transaction};
 use std::sync::Arc;
 
+// LMDB cursor ops: iter_start/iter_from in the lmdb crate unwrap get() and panic on NotFound
+// when the DB is empty. We position the cursor with get() first and handle NotFound.
+const MDB_FIRST: u32 = 0;
+const MDB_SET_RANGE: u32 = 17;
+
 /// LMDB state iterator with chunked loading for constant memory usage
 ///
 /// This iterator fetches data in chunks instead of materializing the entire range,
@@ -86,7 +91,23 @@ impl LmdbStateIter {
             .open_ro_cursor(self.db)
             .map_err(|e| AzothError::Transaction(e.to_string()))?;
 
-        // Position cursor at resume point
+        // Position cursor; lmdb's iter_start/iter_from unwrap and panic on NotFound (empty DB).
+        let pos_result = if !self.current_key.is_empty() {
+            cursor.get(Some(self.current_key.as_slice()), None, MDB_SET_RANGE)
+        } else {
+            cursor.get(None, None, MDB_FIRST)
+        };
+
+        match pos_result {
+            Err(lmdb::Error::NotFound) => {
+                self.finished = true;
+                return Ok(());
+            }
+            Err(e) => return Err(AzothError::Transaction(e.to_string())),
+            Ok(_) => {}
+        }
+
+        // Cursor is positioned; iter_start/iter_from will succeed (we just did the same get).
         let iter = if !self.current_key.is_empty() {
             cursor.iter_from(&self.current_key)
         } else {
