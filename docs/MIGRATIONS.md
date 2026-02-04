@@ -51,17 +51,16 @@ Migration files should follow this naming convention:
 
 For example:
 ```
-0002_create_users_table.sql
-0002_create_users_table.down.sql
-0003_add_user_roles.sql
-0003_add_user_roles.down.sql
+0001_create_users_table.sql
+0001_create_users_table.down.sql
+0002_add_user_roles.sql
+0002_add_user_roles.down.sql
 ```
 
 ### Version Numbers
 
-- **Version 1**: Reserved for the base schema (created automatically)
-- **Version 2+**: Your migrations, numbered sequentially
-- Use 4-digit padding (e.g., `0002`, `0003`) for proper sorting
+- **Version 1+**: Your migrations, numbered sequentially starting from 1
+- Use 4-digit padding (e.g., `0001`, `0002`) for proper sorting
 
 ## Using File-Based Migrations
 
@@ -81,8 +80,8 @@ use azoth::prelude::*;
 let mut manager = MigrationManager::new();
 let path = manager.generate("./migrations", "create_users_table")?;
 // Creates:
-//   ./migrations/0002_create_users_table.sql
-//   ./migrations/0002_create_users_table.down.sql
+//   ./migrations/0001_create_users_table.sql
+//   ./migrations/0001_create_users_table.down.sql
 ```
 
 ### 2. Edit the Generated Files
@@ -90,7 +89,7 @@ let path = manager.generate("./migrations", "create_users_table")?;
 Add your SQL to the `.sql` file:
 
 ```sql
--- migrations/0002_create_users_table.sql
+-- migrations/0001_create_users_table.sql
 CREATE TABLE users (
     id INTEGER PRIMARY KEY,
     username TEXT NOT NULL UNIQUE,
@@ -104,7 +103,7 @@ CREATE INDEX idx_users_email ON users(email);
 Optionally add rollback SQL to the `.down.sql` file:
 
 ```sql
--- migrations/0002_create_users_table.down.sql
+-- migrations/0001_create_users_table.down.sql
 DROP INDEX IF EXISTS idx_users_email;
 DROP TABLE IF EXISTS users;
 ```
@@ -147,7 +146,7 @@ use azoth::prelude::*;
 
 migration!(
     CreateUsersTable,
-    version: 2,
+    version: 1,
     name: "create_users_table",
     up: |conn| {
         conn.execute(
@@ -183,7 +182,7 @@ struct CreateUsersTable;
 
 impl Migration for CreateUsersTable {
     fn version(&self) -> u32 {
-        2
+        1  // First migration starts at version 1
     }
 
     fn name(&self) -> &str {
@@ -316,7 +315,7 @@ fn main() -> Result<()> {
     // Option 2: Add code-based migrations
     migration!(
         AddUserRoles,
-        version: 3,
+        version: 2,
         name: "add_user_roles",
         up: |conn| {
             conn.execute(
@@ -362,9 +361,9 @@ fn main() -> Result<()> {
 - Verify that referenced tables/columns exist
 - Review the error message for specific details
 
-### "Cannot rollback base schema"
-- Version 1 is the base schema and cannot be rolled back
-- Only versions 2+ can be rolled back
+### "Cannot rollback below version 0"
+- Schema version 0 is the initial state before any migrations
+- Only versions 1+ can be rolled back
 
 ## Advanced Features
 

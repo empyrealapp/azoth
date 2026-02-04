@@ -177,11 +177,12 @@ impl CanonicalStore for LmdbCanonicalStore {
             }
 
             // Initialize schema_version if not present
+            // schema_version starts at 0 so that migrations starting from version 1 will be applied
             if txn.get(meta_db, &meta_keys::SCHEMA_VERSION).is_err() {
                 txn.put(
                     meta_db,
                     &meta_keys::SCHEMA_VERSION,
-                    &"1",
+                    &"0",
                     WriteFlags::empty(),
                 )
                 .map_err(|e| AzothError::Transaction(e.to_string()))?;
