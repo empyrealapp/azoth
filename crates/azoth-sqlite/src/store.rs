@@ -12,18 +12,42 @@ use crate::schema;
 use crate::txn::SimpleProjectionTxn;
 
 /// SQLite-backed projection store
+///
+/// Uses separate connections for reads and writes. SQLite WAL mode allows
+/// readers and writers to operate concurrently at the database level.
+/// While each connection still needs mutex protection (rusqlite::Connection
+/// is not Sync), using separate connections means reads don't block writes
+/// and vice versa.
 pub struct SqliteProjectionStore {
-    conn: Arc<Mutex<Connection>>,
+    /// Write connection (for transactions, schema operations, and writes)
+    write_conn: Arc<Mutex<Connection>>,
+    /// Read connection (for read-only queries, separate from write connection)
+    read_conn: Arc<Mutex<Connection>>,
     config: ProjectionConfig,
 }
 
 impl SqliteProjectionStore {
-    /// Get the underlying connection (for migrations and custom queries)
+    /// Get the underlying write connection (for migrations and custom queries)
     ///
     /// Returns an Arc to the Mutex-protected SQLite connection.
     /// Users should lock the mutex to access the connection.
     pub fn conn(&self) -> &Arc<Mutex<Connection>> {
-        &self.conn
+        &self.write_conn
+    }
+
+    /// Open a read-only connection to the same database
+    fn open_read_connection(path: &Path, cfg: &ProjectionConfig) -> Result<Connection> {
+        let conn = Connection::open_with_flags(
+            path,
+            OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )
+        .map_err(|e| AzothError::Projection(e.to_string()))?;
+
+        // cache_size affects read performance
+        conn.pragma_update(None, "cache_size", cfg.cache_size)
+            .map_err(|e| AzothError::Config(e.to_string()))?;
+
+        Ok(conn)
     }
 
     /// Initialize schema if needed
@@ -82,7 +106,8 @@ impl SqliteProjectionStore {
     /// Execute a read-only SQL query asynchronously
     ///
     /// This method runs the query on a separate thread to avoid blocking,
-    /// making it safe to call from async contexts.
+    /// making it safe to call from async contexts. Uses a read-only connection
+    /// that doesn't block writes.
     ///
     /// # Example
     /// ```ignore
@@ -95,7 +120,7 @@ impl SqliteProjectionStore {
         F: FnOnce(&Connection) -> Result<R> + Send + 'static,
         R: Send + 'static,
     {
-        let conn = self.conn.clone();
+        let conn = self.read_conn.clone();
         tokio::task::spawn_blocking(move || {
             let conn_guard = conn.lock().unwrap();
             f(&conn_guard)
@@ -107,7 +132,8 @@ impl SqliteProjectionStore {
     /// Execute a read-only SQL query synchronously
     ///
     /// This is a convenience method for non-async contexts.
-    /// For async contexts, prefer `query_async`.
+    /// For async contexts, prefer `query_async`. Uses a read-only connection
+    /// that doesn't block writes.
     ///
     /// # Example
     /// ```ignore
@@ -119,13 +145,14 @@ impl SqliteProjectionStore {
     where
         F: FnOnce(&Connection) -> Result<R>,
     {
-        let conn_guard = self.conn.lock().unwrap();
+        let conn_guard = self.read_conn.lock().unwrap();
         f(&conn_guard)
     }
 
     /// Execute arbitrary SQL statements (DDL/DML) asynchronously
     ///
     /// Useful for creating tables, indexes, or performing bulk updates.
+    /// Uses the write connection.
     ///
     /// # Example
     /// ```ignore
@@ -139,7 +166,7 @@ impl SqliteProjectionStore {
     where
         F: FnOnce(&Connection) -> Result<()> + Send + 'static,
     {
-        let conn = self.conn.clone();
+        let conn = self.write_conn.clone();
         tokio::task::spawn_blocking(move || {
             let conn_guard = conn.lock().unwrap();
             f(&conn_guard)
@@ -149,6 +176,8 @@ impl SqliteProjectionStore {
     }
 
     /// Execute arbitrary SQL statements (DDL/DML) synchronously
+    ///
+    /// Uses the write connection.
     ///
     /// # Example
     /// ```ignore
@@ -161,7 +190,7 @@ impl SqliteProjectionStore {
     where
         F: FnOnce(&Connection) -> Result<()>,
     {
-        let conn_guard = self.conn.lock().unwrap();
+        let conn_guard = self.write_conn.lock().unwrap();
         f(&conn_guard)
     }
 
@@ -169,7 +198,7 @@ impl SqliteProjectionStore {
     ///
     /// The closure receives a transaction object and can execute multiple
     /// statements atomically. If the closure returns an error, the transaction
-    /// is rolled back.
+    /// is rolled back. Uses the write connection.
     ///
     /// # Example
     /// ```ignore
@@ -183,7 +212,7 @@ impl SqliteProjectionStore {
     where
         F: FnOnce(&rusqlite::Transaction) -> Result<()>,
     {
-        let mut conn_guard = self.conn.lock().unwrap();
+        let mut conn_guard = self.write_conn.lock().unwrap();
         let tx = conn_guard
             .transaction()
             .map_err(|e| AzothError::Projection(e.to_string()))?;
@@ -196,11 +225,13 @@ impl SqliteProjectionStore {
     }
 
     /// Execute a transaction asynchronously
+    ///
+    /// Uses the write connection.
     pub async fn transaction_async<F>(&self, f: F) -> Result<()>
     where
         F: FnOnce(&rusqlite::Transaction) -> Result<()> + Send + 'static,
     {
-        let conn = self.conn.clone();
+        let conn = self.write_conn.clone();
         tokio::task::spawn_blocking(move || {
             let mut conn_guard = conn.lock().unwrap();
             let tx = conn_guard
@@ -227,38 +258,43 @@ impl ProjectionStore for SqliteProjectionStore {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Open connection
-        let conn = Connection::open_with_flags(
+        // Open write connection
+        let write_conn = Connection::open_with_flags(
             &cfg.path,
             OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE,
         )
         .map_err(|e| AzothError::Projection(e.to_string()))?;
 
-        // Configure connection
-        Self::configure_connection(&conn, &cfg)?;
+        // Configure write connection
+        Self::configure_connection(&write_conn, &cfg)?;
 
         // Initialize schema
-        Self::init_schema(&conn)?;
+        Self::init_schema(&write_conn)?;
+
+        // Open separate read connection for concurrent reads
+        let read_conn = Self::open_read_connection(&cfg.path, &cfg)?;
 
         Ok(Self {
-            conn: Arc::new(Mutex::new(conn)),
+            write_conn: Arc::new(Mutex::new(write_conn)),
+            read_conn: Arc::new(Mutex::new(read_conn)),
             config: cfg,
         })
     }
 
     fn close(&self) -> Result<()> {
-        // SQLite connection closes automatically on drop
+        // SQLite connections close automatically on drop
         Ok(())
     }
 
     fn begin_txn(&self) -> Result<Self::Txn<'_>> {
-        // Begin exclusive transaction using SimpleProjectionTxn which actually works
-        let guard = self.conn.lock().unwrap();
+        // Begin exclusive transaction using SimpleProjectionTxn (uses write connection)
+        let guard = self.write_conn.lock().unwrap();
         SimpleProjectionTxn::new(guard)
     }
 
     fn get_cursor(&self) -> Result<EventId> {
-        let conn = self.conn.lock().unwrap();
+        // Use read connection for this read-only operation
+        let conn = self.read_conn.lock().unwrap();
         let cursor: i64 = conn
             .query_row(
                 "SELECT last_applied_event_id FROM projection_meta WHERE id = 0",
@@ -271,14 +307,14 @@ impl ProjectionStore for SqliteProjectionStore {
     }
 
     fn migrate(&self, target_version: u32) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.write_conn.lock().unwrap();
         schema::migrate(&conn, target_version)
     }
 
     fn backup_to(&self, path: &Path) -> Result<()> {
         // Checkpoint WAL to flush all changes to the main database file
         {
-            let conn = self.conn.lock().unwrap();
+            let conn = self.write_conn.lock().unwrap();
             // Execute checkpoint with full iteration of results
             let mut stmt = conn
                 .prepare("PRAGMA wal_checkpoint(RESTART)")
@@ -308,7 +344,8 @@ impl ProjectionStore for SqliteProjectionStore {
     }
 
     fn schema_version(&self) -> Result<u32> {
-        let conn = self.conn.lock().unwrap();
+        // Use read connection for this read-only operation
+        let conn = self.read_conn.lock().unwrap();
         let version: i64 = conn
             .query_row(
                 "SELECT schema_version FROM projection_meta WHERE id = 0",

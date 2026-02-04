@@ -7,8 +7,8 @@ description = "Multi-consumer pub/sub bus built on Azoth primitives"
 license = "MIT OR Apache-2.0"
 
 [dependencies]
-azoth = { path = "../azoth" }
-azoth-core = { path = "../azoth-core" }
+azoth = { workspace = true }
+azoth-core = { workspace = true }
 tokio = { version = "1", features = ["sync", "time", "macros", "rt"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
