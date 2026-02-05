@@ -26,7 +26,8 @@ impl CanonicalMeta {
         Self {
             next_event_id: 0,
             sealed_event_id: None,
-            schema_version: 1,
+            // schema_version starts at 0 so that migrations starting from version 1 will be applied
+            schema_version: 0,
             created_at: now.clone(),
             updated_at: now,
         }
