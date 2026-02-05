@@ -52,8 +52,31 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 /// 256-bit unsigned integer stored as 4 u64 words in little-endian order
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+/// 
+/// Note: PartialOrd/Ord are manually implemented to compare from most-significant
+/// limb to least-significant, which is correct for numeric ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct U256([u64; 4]);
+
+impl PartialOrd for U256 {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for U256 {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Compare from most-significant limb (index 3) to least-significant (index 0)
+        // This is the correct ordering for little-endian storage
+        for i in (0..4).rev() {
+            match self.0[i].cmp(&other.0[i]) {
+                std::cmp::Ordering::Equal => continue,
+                ord => return ord,
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
+}
 
 impl U256 {
     pub fn zero() -> Self {
