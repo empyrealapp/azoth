@@ -52,7 +52,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
 /// 256-bit unsigned integer stored as 4 u64 words in little-endian order
-/// 
+///
 /// Note: PartialOrd/Ord are manually implemented to compare from most-significant
 /// limb to least-significant, which is correct for numeric ordering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
