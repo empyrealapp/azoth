@@ -8,7 +8,7 @@ struct CreateUsersTable;
 
 impl Migration for CreateUsersTable {
     fn version(&self) -> u32 {
-        1  // First migration starts at version 1
+        1 // First migration starts at version 1
     }
 
     fn name(&self) -> &str {
@@ -39,7 +39,7 @@ struct AddEmailToUsers;
 
 impl Migration for AddEmailToUsers {
     fn version(&self) -> u32 {
-        2  // Second migration is version 2
+        2 // Second migration is version 2
     }
 
     fn name(&self) -> &str {
