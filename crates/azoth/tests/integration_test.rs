@@ -339,14 +339,14 @@ fn test_event_id_monotonicity() {
 fn test_schema_version() {
     let (db, _temp) = create_test_db();
 
-    // Initial version should be 1
+    // Initial version should be 0 (no migrations applied)
+    assert_eq!(db.projection().schema_version().unwrap(), 0);
+
+    // Migrate to version 1
+    db.projection().migrate(1).unwrap();
     assert_eq!(db.projection().schema_version().unwrap(), 1);
 
-    // Migrate to version 2
-    db.projection().migrate(2).unwrap();
-    assert_eq!(db.projection().schema_version().unwrap(), 2);
-
     // Migrating to same version is a no-op
-    db.projection().migrate(2).unwrap();
-    assert_eq!(db.projection().schema_version().unwrap(), 2);
+    db.projection().migrate(1).unwrap();
+    assert_eq!(db.projection().schema_version().unwrap(), 1);
 }

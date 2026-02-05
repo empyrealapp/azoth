@@ -8,7 +8,7 @@ struct CreateUsersTable;
 
 impl Migration for CreateUsersTable {
     fn version(&self) -> u32 {
-        2
+        1 // First migration starts at version 1
     }
 
     fn name(&self) -> &str {
@@ -39,7 +39,7 @@ struct AddEmailToUsers;
 
 impl Migration for AddEmailToUsers {
     fn version(&self) -> u32 {
-        3
+        2 // Second migration is version 2
     }
 
     fn name(&self) -> &str {
@@ -64,9 +64,9 @@ fn test_migration_manager() {
     // Should list migrations
     let migrations = manager.list();
     assert_eq!(migrations.len(), 2);
-    assert_eq!(migrations[0].version, 2);
+    assert_eq!(migrations[0].version, 1);
     assert_eq!(migrations[0].name, "create_users_table");
-    assert_eq!(migrations[1].version, 3);
+    assert_eq!(migrations[1].version, 2);
     assert_eq!(migrations[1].name, "add_email_to_users");
 }
 
@@ -80,8 +80,8 @@ fn test_migration_ordering() {
 
     // Should be sorted by version
     let migrations = manager.list();
-    assert_eq!(migrations[0].version, 2);
-    assert_eq!(migrations[1].version, 3);
+    assert_eq!(migrations[0].version, 1);
+    assert_eq!(migrations[1].version, 2);
 }
 
 #[test]
@@ -93,20 +93,20 @@ fn test_pending_migrations() {
     manager.add(Box::new(CreateUsersTable));
     manager.add(Box::new(AddEmailToUsers));
 
-    // All migrations should be pending
+    // All migrations should be pending (schema starts at 0)
     let pending = manager.pending(db.projection()).unwrap();
     assert_eq!(pending.len(), 2);
-    assert_eq!(pending[0].version, 2);
-    assert_eq!(pending[1].version, 3);
+    assert_eq!(pending[0].version, 1);
+    assert_eq!(pending[1].version, 2);
 
-    // After migrating to v2, only v3 should be pending
-    db.projection().migrate(2).unwrap();
+    // After migrating to v1, only v2 should be pending
+    db.projection().migrate(1).unwrap();
     let pending = manager.pending(db.projection()).unwrap();
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].version, 3);
+    assert_eq!(pending[0].version, 2);
 
-    // After migrating to v3, none should be pending
-    db.projection().migrate(3).unwrap();
+    // After migrating to v2, none should be pending
+    db.projection().migrate(2).unwrap();
     let pending = manager.pending(db.projection()).unwrap();
     assert_eq!(pending.len(), 0);
 }

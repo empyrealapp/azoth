@@ -65,9 +65,10 @@ impl SqliteProjectionStore {
         .map_err(|e| AzothError::Projection(e.to_string()))?;
 
         // Insert default row if not exists (-1 means no events processed yet)
+        // schema_version starts at 0 so that migrations starting from version 1 will be applied
         conn.execute(
             "INSERT OR IGNORE INTO projection_meta (id, last_applied_event_id, schema_version)
-             VALUES (0, -1, 1)",
+             VALUES (0, -1, 0)",
             [],
         )
         .map_err(|e| AzothError::Projection(e.to_string()))?;
