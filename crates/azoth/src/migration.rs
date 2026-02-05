@@ -582,7 +582,7 @@ mod tests {
 
     impl Migration for TestMigration {
         fn version(&self) -> u32 {
-            1  // First migration starts at version 1
+            1 // First migration starts at version 1
         }
 
         fn name(&self) -> &str {
