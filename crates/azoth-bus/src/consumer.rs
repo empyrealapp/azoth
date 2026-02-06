@@ -4,7 +4,7 @@ use crate::{
     filter::{Event, EventFilter, EventFilterTrait},
     notification::WakeStrategy,
 };
-use azoth::{typed_values::TypedValue, AzothDb, Transaction};
+use azoth::{typed_values::TypedValue, AsyncTransaction, AzothDb, Transaction};
 use azoth_core::{
     traits::canonical::{CanonicalReadTxn, CanonicalStore},
     EventId,
@@ -166,6 +166,45 @@ impl Consumer {
 
                 Ok(())
             })?;
+        Ok(())
+    }
+
+    /// Acknowledge processing of an event asynchronously (safe for async context)
+    ///
+    /// This is the async-safe version of `ack()`. Use this when calling from
+    /// async code to avoid blocking the runtime.
+    pub async fn ack_async(&mut self, event_id: EventId) -> Result<()> {
+        let meta_key = self.meta_key.clone();
+        let cursor_key = self.cursor_key.clone();
+
+        AsyncTransaction::new(self.db.clone())
+            .write_keys(vec![cursor_key.clone(), meta_key.clone()])
+            .execute(move |ctx| {
+                // Update cursor
+                ctx.set(&cursor_key, &TypedValue::I64(event_id as i64))?;
+
+                // Update last ack timestamp in metadata
+                if let Some(meta_value) = ctx.get_opt(&meta_key)? {
+                    let meta_bytes = match meta_value {
+                        TypedValue::Bytes(b) => b,
+                        _ => {
+                            return Err(azoth_core::AzothError::InvalidState(
+                                "Consumer metadata must be bytes".into(),
+                            ))
+                        }
+                    };
+                    let mut meta: ConsumerMetadata = serde_json::from_slice(&meta_bytes)
+                        .map_err(|e| azoth_core::AzothError::Serialization(e.to_string()))?;
+                    meta.last_ack_at = Some(chrono::Utc::now());
+
+                    let updated_bytes = serde_json::to_vec(&meta)
+                        .map_err(|e| azoth_core::AzothError::Serialization(e.to_string()))?;
+                    ctx.set(&meta_key, &TypedValue::Bytes(updated_bytes))?;
+                }
+
+                Ok(())
+            })
+            .await?;
         Ok(())
     }
 

@@ -43,6 +43,7 @@ pub mod error;
 pub mod filter;
 pub mod notification;
 pub mod retention;
+pub mod stream;
 
 pub use bus::{ConsumerInfo, EventBus};
 pub use consumer::Consumer;
@@ -51,3 +52,4 @@ pub use error::{BusError, Result};
 pub use filter::EventFilter;
 pub use notification::WakeStrategy;
 pub use retention::{CompactionStats, RetentionManager, RetentionPolicy};
+pub use stream::{auto_ack_stream, event_stream, ConsumerStream};
