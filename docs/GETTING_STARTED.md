@@ -57,8 +57,7 @@ db.projector().run_once()?;
 ```rust
 TransactionBuilder::new(&db)
     // Declare keys upfront
-    .read_keys(vec![b"balance".to_vec()])
-    .write_keys(vec![b"balance".to_vec()])
+    .keys(vec![b"balance".to_vec()])
 
     // Validation with locks held
     .validate(|ctx| {
@@ -333,7 +332,7 @@ let handles: Vec<_> = (0..100)
             let key = format!("account_{}", i);
 
             TransactionBuilder::new(&db)
-                .write_keys(vec![key.as_bytes().to_vec()])
+                .keys(vec![key.as_bytes().to_vec()])
                 .execute(|ctx| {
                     ctx.put_typed(
                         key.as_bytes(),
@@ -389,8 +388,7 @@ Always declare keys upfront for better lock efficiency:
 
 ```rust
 TransactionBuilder::new(&db)
-    .read_keys(vec![b"key1".to_vec(), b"key2".to_vec()])
-    .write_keys(vec![b"key3".to_vec()])
+    .keys(vec![b"key1".to_vec(), b"key2".to_vec(), b"key3".to_vec()])
     // ...
 ```
 
