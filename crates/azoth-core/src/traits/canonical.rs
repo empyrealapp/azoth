@@ -65,6 +65,23 @@ pub trait StateIter {
     fn next(&mut self) -> Result<Option<(Vec<u8>, Vec<u8>)>>;
 }
 
+/// Read-only transaction for canonical store operations
+///
+/// Provides read-only access to state without blocking writers.
+/// This is the proper type for read operations - unlike write transactions,
+/// multiple read transactions can run concurrently.
+///
+/// Note: Not required to be Send, as some backends (LMDB) have thread-affine transactions
+pub trait CanonicalReadTxn {
+    /// Read state by key
+    fn get_state(&self, key: &[u8]) -> Result<Option<Vec<u8>>>;
+
+    /// Check if a key exists
+    fn exists(&self, key: &[u8]) -> Result<bool> {
+        Ok(self.get_state(key)?.is_some())
+    }
+}
+
 /// Transaction for canonical store operations
 ///
 /// Supports three-phase commit:
@@ -123,7 +140,13 @@ pub trait CanonicalTxn {
 /// - Seal mechanism for deterministic snapshots
 /// - Pausable ingestion for safe backups
 pub trait CanonicalStore: Send + Sync {
+    /// Write transaction type (for state mutations and event appends)
     type Txn<'a>: CanonicalTxn
+    where
+        Self: 'a;
+
+    /// Read-only transaction type (for concurrent reads without blocking)
+    type ReadTxn<'a>: CanonicalReadTxn
     where
         Self: 'a;
 
@@ -136,7 +159,10 @@ pub trait CanonicalStore: Send + Sync {
     fn close(&self) -> Result<()>;
 
     /// Begin a read-only transaction
-    fn read_txn(&self) -> Result<Self::Txn<'_>>;
+    ///
+    /// Read transactions allow concurrent reads without blocking writes or other reads.
+    /// This is more efficient than write_txn() for queries and preflight validation.
+    fn read_txn(&self) -> Result<Self::ReadTxn<'_>>;
 
     /// Begin a write transaction
     ///

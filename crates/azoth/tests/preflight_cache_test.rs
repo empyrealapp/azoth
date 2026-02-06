@@ -1,6 +1,6 @@
 //! Integration tests for preflight cache functionality
 
-use azoth::{AzothDb, Transaction, TypedValue};
+use azoth::{AzothDb, CanonicalReadTxn, CanonicalStore, Transaction, TypedValue};
 use azoth_core::{error::Result, CanonicalConfig, ProjectionConfig};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -154,7 +154,7 @@ fn test_preflight_cache_concurrent() -> Result<()> {
     }
 
     // Verify all values are correct
-    let txn = db.canonical().read_only_txn()?;
+    let txn = db.canonical().read_txn()?;
     for i in 0..10 {
         let key = format!("key-{}", i);
         let bytes = txn.get_state(key.as_bytes())?.unwrap();

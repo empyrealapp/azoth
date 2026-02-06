@@ -281,6 +281,7 @@ mod tests {
             synchronous: azoth_core::config::SynchronousMode::Normal,
             cache_size: -2000,
             schema_version: 1,
+            read_pool: azoth_core::config::ReadPoolConfig::default(),
         };
 
         let store = Arc::new(azoth_sqlite::SqliteProjectionStore::open(config).unwrap());

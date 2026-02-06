@@ -50,20 +50,23 @@ pub mod typed_values;
 
 // Re-export core types
 pub use azoth_core::{
-    config::{CanonicalConfig, ProjectionConfig, ProjectorConfig, SyncMode, SynchronousMode},
+    config::{
+        CanonicalConfig, ProjectionConfig, ProjectorConfig, ReadPoolConfig, SyncMode,
+        SynchronousMode,
+    },
     error::{AzothError, Result},
     traits::{
-        CanonicalStore, CanonicalTxn, DecodedEvent, EventApplier, EventDecoder, EventIter,
-        PreflightResult, ProjectionStore, ProjectionTxn, StateIter,
+        CanonicalReadTxn, CanonicalStore, CanonicalTxn, DecodedEvent, EventApplier, EventDecoder,
+        EventIter, PreflightResult, ProjectionStore, ProjectionTxn, StateIter,
     },
     types::{BackupInfo, BackupManifest, CanonicalMeta, CommitInfo, EventBytes, EventId},
     LockManager,
 };
 
 // Re-export implementations
-pub use azoth_lmdb::LmdbCanonicalStore;
+pub use azoth_lmdb::{LmdbCanonicalStore, LmdbReadPool, LmdbReadTxn, PooledLmdbReadTxn};
 pub use azoth_projector::{Projector, ProjectorStats};
-pub use azoth_sqlite::SqliteProjectionStore;
+pub use azoth_sqlite::{PooledSqliteConnection, SqliteProjectionStore, SqliteReadPool};
 
 // Re-export main types from this crate
 pub use backup::{BackupOptions, EncryptionKey};

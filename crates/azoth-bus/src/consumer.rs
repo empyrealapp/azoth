@@ -5,7 +5,10 @@ use crate::{
     notification::WakeStrategy,
 };
 use azoth::{typed_values::TypedValue, AzothDb, Transaction};
-use azoth_core::{traits::canonical::CanonicalStore, EventId};
+use azoth_core::{
+    traits::canonical::{CanonicalReadTxn, CanonicalStore},
+    EventId,
+};
 use std::sync::Arc;
 
 /// A consumer of events from a stream
@@ -68,7 +71,7 @@ impl Consumer {
     ///
     /// Returns None if no events have been acknowledged yet.
     pub fn position(&self) -> Result<Option<u64>> {
-        let txn = self.db.canonical().read_only_txn()?;
+        let txn = self.db.canonical().read_txn()?;
         match txn.get_state(&self.cursor_key)? {
             Some(bytes) => {
                 let value = TypedValue::from_bytes(&bytes)?;
@@ -168,7 +171,7 @@ impl Consumer {
 
     /// Get consumer metadata
     pub fn metadata(&self) -> Result<ConsumerMetadata> {
-        let txn = self.db.canonical().read_only_txn()?;
+        let txn = self.db.canonical().read_txn()?;
         match txn.get_state(&self.meta_key)? {
             Some(bytes) => {
                 let value = TypedValue::from_bytes(&bytes)?;

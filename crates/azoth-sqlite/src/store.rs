@@ -8,6 +8,7 @@ use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use crate::read_pool::SqliteReadPool;
 use crate::schema;
 use crate::txn::SimpleProjectionTxn;
 
@@ -18,12 +19,16 @@ use crate::txn::SimpleProjectionTxn;
 /// While each connection still needs mutex protection (rusqlite::Connection
 /// is not Sync), using separate connections means reads don't block writes
 /// and vice versa.
+///
+/// Optionally supports a read connection pool for higher concurrency.
 pub struct SqliteProjectionStore {
     /// Write connection (for transactions, schema operations, and writes)
     write_conn: Arc<Mutex<Connection>>,
     /// Read connection (for read-only queries, separate from write connection)
     read_conn: Arc<Mutex<Connection>>,
     config: ProjectionConfig,
+    /// Optional read pool for concurrent reads
+    read_pool: Option<Arc<SqliteReadPool>>,
 }
 
 impl SqliteProjectionStore {
@@ -248,6 +253,23 @@ impl SqliteProjectionStore {
         .await
         .map_err(|e| AzothError::Projection(format!("Transaction task failed: {}", e)))?
     }
+
+    /// Get reference to the read pool (if enabled)
+    ///
+    /// Returns None if read pooling was not enabled in config.
+    pub fn read_pool(&self) -> Option<&Arc<SqliteReadPool>> {
+        self.read_pool.as_ref()
+    }
+
+    /// Check if read pooling is enabled
+    pub fn has_read_pool(&self) -> bool {
+        self.read_pool.is_some()
+    }
+
+    /// Get the database path
+    pub fn db_path(&self) -> &Path {
+        &self.config.path
+    }
 }
 
 impl ProjectionStore for SqliteProjectionStore {
@@ -275,10 +297,21 @@ impl ProjectionStore for SqliteProjectionStore {
         // Open separate read connection for concurrent reads
         let read_conn = Self::open_read_connection(&cfg.path, &cfg)?;
 
+        // Initialize read pool if enabled
+        let read_pool = if cfg.read_pool.enabled {
+            Some(Arc::new(SqliteReadPool::new(
+                &cfg.path,
+                cfg.read_pool.clone(),
+            )?))
+        } else {
+            None
+        };
+
         Ok(Self {
             write_conn: Arc::new(Mutex::new(write_conn)),
             read_conn: Arc::new(Mutex::new(read_conn)),
             config: cfg,
+            read_pool,
         })
     }
 

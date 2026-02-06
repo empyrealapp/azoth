@@ -8,14 +8,17 @@
 //! - Stripe locking for concurrent preflight validation
 //! - Hot copy backup support
 //! - Single-writer semantics (enforced by mutex)
+//! - Optional read transaction pooling for concurrent reads
 
 pub mod backup;
 pub mod iter;
 pub mod keys;
 pub mod preflight_cache;
+pub mod read_pool;
 pub mod state_iter;
 pub mod store;
 pub mod txn;
 
+pub use read_pool::{LmdbReadPool, PooledLmdbReadTxn};
 pub use store::LmdbCanonicalStore;
 pub use txn::{LmdbReadTxn, LmdbWriteTxn};
