@@ -84,7 +84,7 @@
 //!
 //! // Async-safe transaction - automatically uses spawn_blocking
 //! AsyncTransaction::new(db)
-//!     .write_keys(vec![b"balance".to_vec()])
+//!     .keys(vec![b"balance".to_vec()])
 //!     .validate(|ctx| {
 //!         let balance = ctx.get(b"balance")?.as_i64()?;
 //!         if balance < 50 {
@@ -134,7 +134,7 @@ use std::sync::Arc;
 /// let db = Arc::new(AzothDb::open("./data")?);
 ///
 /// AsyncTransaction::new(db)
-///     .write_keys(vec![b"balance".to_vec()])
+///     .keys(vec![b"balance".to_vec()])
 ///     .validate(|ctx| {
 ///         let balance = ctx.get(b"balance")?.as_i64()?;
 ///         if balance < 50 {
@@ -178,32 +178,6 @@ impl AsyncTransaction {
     pub fn keys(mut self, keys: Vec<Vec<u8>>) -> Self {
         self.declared_keys.extend(keys);
         self
-    }
-
-    /// Declare keys that will be read during this transaction
-    ///
-    /// # Deprecated
-    ///
-    /// Use `keys()` instead. The read/write distinction is no longer used.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use keys() instead - read/write distinction removed"
-    )]
-    pub fn read_keys(self, keys: Vec<Vec<u8>>) -> Self {
-        self.keys(keys)
-    }
-
-    /// Declare keys that will be written during this transaction
-    ///
-    /// # Deprecated
-    ///
-    /// Use `keys()` instead. The read/write distinction is no longer used.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use keys() instead - read/write distinction removed"
-    )]
-    pub fn write_keys(self, keys: Vec<Vec<u8>>) -> Self {
-        self.keys(keys)
     }
 
     /// Add a validation function that runs with locks held
@@ -652,34 +626,6 @@ impl<'a> Transaction<'a> {
         self
     }
 
-    /// Declare keys that will be read during this transaction
-    ///
-    /// # Deprecated
-    ///
-    /// Use `keys()` instead. The read/write distinction is no longer used
-    /// for lock acquisition (all locks are now exclusive).
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use keys() instead - read/write distinction removed"
-    )]
-    pub fn read_keys(self, keys: Vec<Vec<u8>>) -> Self {
-        self.keys(keys)
-    }
-
-    /// Declare keys that will be written during this transaction
-    ///
-    /// # Deprecated
-    ///
-    /// Use `keys()` instead. The read/write distinction is no longer used
-    /// for lock acquisition (all locks are now exclusive).
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use keys() instead - read/write distinction removed"
-    )]
-    pub fn write_keys(self, keys: Vec<Vec<u8>>) -> Self {
-        self.keys(keys)
-    }
-
     /// Add a validation function that runs with locks held
     ///
     /// Validators run in preflight phase AFTER locks are acquired.
@@ -888,9 +834,9 @@ impl<'a> Transaction<'a> {
     ///
     /// // Safe: we're inside spawn_blocking
     /// tokio::task::spawn_blocking(move || {
-    ///     Transaction::new(&db_clone)
-    ///         .write_keys(vec![b"key".to_vec()])
-    ///         .execute_blocking(|ctx| {
+///     Transaction::new(&db_clone)
+///         .keys(vec![b"key".to_vec()])
+///         .execute_blocking(|ctx| {
     ///             ctx.set(b"key", &TypedValue::I64(42))?;
     ///             Ok(())
     ///         })

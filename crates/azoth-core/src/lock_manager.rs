@@ -174,40 +174,6 @@ impl LockManager {
     pub fn default_timeout(&self) -> Duration {
         self.default_timeout
     }
-
-    // Legacy methods for backward compatibility - deprecated
-
-    /// Acquire read lock for a key (blocking)
-    ///
-    /// # Deprecated
-    ///
-    /// Use `acquire_keys()` instead for deadlock-safe multi-key locking.
-    /// This method is kept for backward compatibility but may cause deadlocks
-    /// when used with multiple keys in different orders across threads.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use acquire_keys() for deadlock-safe multi-key locking"
-    )]
-    pub fn read_lock(&self, key: &[u8]) -> MutexGuard<'_, ()> {
-        let idx = self.stripe_index(key);
-        self.stripes[idx].lock()
-    }
-
-    /// Acquire write lock for a key (blocking)
-    ///
-    /// # Deprecated
-    ///
-    /// Use `acquire_keys()` instead for deadlock-safe multi-key locking.
-    /// This method is kept for backward compatibility but may cause deadlocks
-    /// when used with multiple keys in different orders across threads.
-    #[deprecated(
-        since = "0.2.0",
-        note = "Use acquire_keys() for deadlock-safe multi-key locking"
-    )]
-    pub fn write_lock(&self, key: &[u8]) -> MutexGuard<'_, ()> {
-        let idx = self.stripe_index(key);
-        self.stripes[idx].lock()
-    }
 }
 
 #[cfg(test)]

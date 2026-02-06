@@ -161,8 +161,7 @@ loop {
 ```rust
 TransactionBuilder::new(&db)
     // Phase 1: Declare keys and acquire locks
-    .read_keys(vec![b"balance".to_vec()])
-    .write_keys(vec![b"balance".to_vec()])
+    .keys(vec![b"balance".to_vec()])
 
     // Phase 1: Validate with locks held
     .validate(|ctx| {
