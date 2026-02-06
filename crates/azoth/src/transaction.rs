@@ -834,9 +834,9 @@ impl<'a> Transaction<'a> {
     ///
     /// // Safe: we're inside spawn_blocking
     /// tokio::task::spawn_blocking(move || {
-///     Transaction::new(&db_clone)
-///         .keys(vec![b"key".to_vec()])
-///         .execute_blocking(|ctx| {
+    ///     Transaction::new(&db_clone)
+    ///         .keys(vec![b"key".to_vec()])
+    ///         .execute_blocking(|ctx| {
     ///             ctx.set(b"key", &TypedValue::I64(42))?;
     ///             Ok(())
     ///         })

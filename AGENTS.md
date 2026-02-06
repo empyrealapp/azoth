@@ -29,7 +29,7 @@ Poor fits: simple key-value needs (use raw LMDB), document-heavy workloads (use 
 Add to `Cargo.toml`:
 ```toml
 [dependencies]
-azoth = "0.1.1"
+azoth = "0.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ```
