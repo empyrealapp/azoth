@@ -70,12 +70,14 @@ async fn main() -> Result<()> {
 
     // Open database
     let db = Arc::new(AzothDb::open("./tmp/dlq_example")?);
+    #[allow(clippy::arc_with_non_send_sync)]
     let conn = Arc::new(
         rusqlite::Connection::open("./tmp/dlq_example/projection.db")
             .map_err(|e| AzothError::Projection(e.to_string()))?,
     );
 
     // Create DLQ
+    #[allow(clippy::arc_with_non_send_sync)]
     let dlq = Arc::new(DeadLetterQueue::new(conn.clone())?);
 
     // Register handler that will fail 2 times before succeeding
@@ -139,6 +141,7 @@ async fn main() -> Result<()> {
         stop_on_consecutive_failures: Some(5),
     };
 
+    #[allow(clippy::arc_with_non_send_sync)]
     let replayer = Arc::new(DlqReplayer::new(dlq.clone(), registry.clone(), config));
 
     tracing::info!("Starting DLQ replayer...");

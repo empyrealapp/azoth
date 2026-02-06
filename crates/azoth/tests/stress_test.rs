@@ -311,10 +311,8 @@ fn test_lock_fairness() {
                         .execute(|ctx| {
                             // Increment counter
                             let current = match ctx.get_opt(b"counter")? {
-                                Some(val) => match val {
-                                    TypedValue::U64(v) => v,
-                                    _ => 0,
-                                },
+                                Some(TypedValue::U64(v)) => v,
+                                Some(_) => 0,
                                 None => 0,
                             };
                             ctx.set(b"counter", &TypedValue::U64(current + 1))?;

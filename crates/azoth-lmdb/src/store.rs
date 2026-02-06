@@ -162,6 +162,8 @@ impl CanonicalStore for LmdbCanonicalStore {
         // Initialize file-based event log
         let event_log_config = FileEventLogConfig {
             base_dir: cfg.path.join("event-log"),
+            max_event_size: cfg.event_max_size_bytes,
+            max_batch_bytes: cfg.event_batch_max_bytes,
             ..Default::default()
         };
         let event_log = Arc::new(FileEventLog::open(event_log_config)?);

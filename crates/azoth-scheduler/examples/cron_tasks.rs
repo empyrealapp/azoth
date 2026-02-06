@@ -101,6 +101,7 @@ async fn main() -> Result<()> {
 
     // Setup database and projection
     let db = Arc::new(AzothDb::open("./data/cron-example")?);
+    #[allow(clippy::arc_with_non_send_sync)]
     let conn = Arc::new(Connection::open("./data/cron-example/projection.db")?);
 
     // Create scheduler

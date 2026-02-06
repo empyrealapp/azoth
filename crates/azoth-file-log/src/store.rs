@@ -26,15 +26,23 @@ pub struct FileEventLogConfig {
 
     /// Maximum size for batch write buffer (bytes)
     pub batch_buffer_size: usize,
+
+    /// Maximum size of a single event payload (bytes)
+    pub max_event_size: usize,
+
+    /// Maximum total size for a single append batch (bytes)
+    pub max_batch_bytes: usize,
 }
 
 impl Default for FileEventLogConfig {
     fn default() -> Self {
         Self {
             base_dir: PathBuf::from("./data/event-log"),
-            max_file_size: 512 * 1024 * 1024, // 512MB
-            write_buffer_size: 256 * 1024,    // 256KB (increased from 64KB)
-            batch_buffer_size: 1024 * 1024,   // 1MB for batch writes
+            max_file_size: 512 * 1024 * 1024,  // 512MB
+            write_buffer_size: 256 * 1024,     // 256KB (increased from 64KB)
+            batch_buffer_size: 1024 * 1024,    // 1MB for batch writes
+            max_event_size: 4 * 1024 * 1024,   // 4MB single-event limit
+            max_batch_bytes: 64 * 1024 * 1024, // 64MB batch limit
         }
     }
 }
@@ -123,6 +131,21 @@ impl FileEventLog {
     ///
     /// Format: [event_id: u64][size: u32][data: bytes]
     fn write_event_entry(&self, event_id: EventId, event_bytes: &[u8]) -> Result<()> {
+        if event_bytes.len() > self.config.max_event_size {
+            return Err(AzothError::InvalidState(format!(
+                "Event size {} exceeds max_event_size {}",
+                event_bytes.len(),
+                self.config.max_event_size
+            )));
+        }
+
+        if event_bytes.len() > u32::MAX as usize {
+            return Err(AzothError::InvalidState(format!(
+                "Event size {} exceeds u32 encoding limit",
+                event_bytes.len()
+            )));
+        }
+
         let mut writer = self.writer.lock().unwrap();
 
         // Write event_id (8 bytes, big-endian)
@@ -231,6 +254,29 @@ impl EventLog for FileEventLog {
             .map(|e| 8 + 4 + e.len()) // event_id + size + data
             .sum();
 
+        if total_size > self.config.max_batch_bytes {
+            return Err(AzothError::InvalidState(format!(
+                "Batch size {} exceeds max_batch_bytes {}",
+                total_size, self.config.max_batch_bytes
+            )));
+        }
+
+        for event in events {
+            if event.len() > self.config.max_event_size {
+                return Err(AzothError::InvalidState(format!(
+                    "Event size {} exceeds max_event_size {}",
+                    event.len(),
+                    self.config.max_event_size
+                )));
+            }
+            if event.len() > u32::MAX as usize {
+                return Err(AzothError::InvalidState(format!(
+                    "Event size {} exceeds u32 encoding limit",
+                    event.len()
+                )));
+            }
+        }
+
         // Check if batch exceeds reasonable size
         if total_size > self.config.batch_buffer_size {
             // For very large batches, fall back to individual writes
@@ -309,6 +355,7 @@ impl EventLog for FileEventLog {
             start,
             end_id,
             meta.current_file_num,
+            self.config.max_event_size,
         )?))
     }
 
@@ -411,10 +458,17 @@ struct FileEventLogIter {
     current_file: Option<File>,
     next_event_id: EventId,
     end_event_id: EventId,
+    max_event_size: usize,
 }
 
 impl FileEventLogIter {
-    fn new(base_dir: PathBuf, start: EventId, end: EventId, max_file_num: u64) -> Result<Self> {
+    fn new(
+        base_dir: PathBuf,
+        start: EventId,
+        end: EventId,
+        max_file_num: u64,
+        max_event_size: usize,
+    ) -> Result<Self> {
         let mut iter = Self {
             base_dir,
             current_file_num: 0,
@@ -422,6 +476,7 @@ impl FileEventLogIter {
             current_file: None,
             next_event_id: start,
             end_event_id: end,
+            max_event_size,
         };
 
         // Open first file
@@ -475,6 +530,13 @@ impl FileEventLogIter {
             let event_id = u64::from_be_bytes(header[0..8].try_into().unwrap());
             let size = u32::from_be_bytes(header[8..12].try_into().unwrap());
 
+            if size as usize > self.max_event_size {
+                return Err(AzothError::InvalidState(format!(
+                    "Event {} size {} exceeds max_event_size {}",
+                    event_id, size, self.max_event_size
+                )));
+            }
+
             // Read event data
             let mut data = vec![0u8; size as usize];
             file.read_exact(&mut data)?;
@@ -516,6 +578,8 @@ mod tests {
             max_file_size: 1024, // Small for testing rotation
             write_buffer_size: 128,
             batch_buffer_size: 4096,
+            max_event_size: 1024 * 1024,
+            max_batch_bytes: 16 * 1024 * 1024,
         };
         let log = FileEventLog::open(config).unwrap();
         (log, temp_dir)

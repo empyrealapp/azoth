@@ -14,7 +14,7 @@ pub struct SimpleProjectionTxn<'a> {
 
 impl<'a> SimpleProjectionTxn<'a> {
     pub fn new(conn: MutexGuard<'a, Connection>) -> Result<Self> {
-        conn.execute("BEGIN EXCLUSIVE TRANSACTION", [])
+        conn.execute("BEGIN IMMEDIATE TRANSACTION", [])
             .map_err(|e| AzothError::Projection(e.to_string()))?;
 
         Ok(Self { conn, in_txn: true })
