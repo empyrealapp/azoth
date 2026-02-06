@@ -5,6 +5,13 @@
 //! 2. **Update**: Modify state (KV operations)
 //! 3. **Log**: Append events
 //!
+//! # Deadlock Prevention
+//!
+//! This module provides automatic deadlock prevention through:
+//! - **Automatic key sorting**: Locks are always acquired in stripe order
+//! - **Timeout-based acquisition**: Locks timeout instead of blocking forever
+//! - **Strict key validation**: Only declared keys can be accessed
+//!
 //! # Async Safety
 //!
 //! LMDB operations are inherently synchronous and blocking. When used from async
@@ -45,9 +52,11 @@
 //!
 //! // Synchronous transaction - only use from sync code!
 //! Transaction::new(&db)
-//!     .require(b"balance".to_vec(), |value| {
-//!         let typed_value = value.ok_or(AzothError::PreflightFailed("Balance must exist".into()))?;
-//!         let balance = typed_value.as_i64()?;
+//!     // Declare all keys that will be accessed
+//!     .keys(vec![b"balance".to_vec()])
+//!     // Phase 1: Preflight validation
+//!     .validate(|ctx| {
+//!         let balance = ctx.get(b"balance")?.as_i64()?;
 //!         if balance < 50 {
 //!             return Err(AzothError::PreflightFailed("Insufficient balance".into()));
 //!         }
@@ -99,6 +108,7 @@ use crate::{
     Result, TypedValue,
 };
 use azoth_lmdb::preflight_cache::{CachedValue, PreflightCache};
+use std::collections::HashSet;
 use std::sync::Arc;
 
 // ============================================================================
@@ -144,8 +154,7 @@ use std::sync::Arc;
 /// ```
 pub struct AsyncTransaction {
     db: Arc<AzothDb>,
-    read_keys: Vec<Vec<u8>>,
-    write_keys: Vec<Vec<u8>>,
+    declared_keys: HashSet<Vec<u8>>,
     validators: Vec<PreflightValidator>,
 }
 
@@ -157,22 +166,44 @@ impl AsyncTransaction {
     pub fn new(db: Arc<AzothDb>) -> Self {
         Self {
             db,
-            read_keys: Vec::new(),
-            write_keys: Vec::new(),
+            declared_keys: HashSet::new(),
             validators: Vec::new(),
         }
     }
 
-    /// Declare keys that will be read during this transaction
-    pub fn read_keys(mut self, keys: Vec<Vec<u8>>) -> Self {
-        self.read_keys.extend(keys);
+    /// Declare keys that will be accessed during this transaction
+    ///
+    /// All keys that will be read or written must be declared upfront.
+    /// Keys can be declared in any order - they will be sorted internally.
+    pub fn keys(mut self, keys: Vec<Vec<u8>>) -> Self {
+        self.declared_keys.extend(keys);
         self
     }
 
+    /// Declare keys that will be read during this transaction
+    ///
+    /// # Deprecated
+    ///
+    /// Use `keys()` instead. The read/write distinction is no longer used.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use keys() instead - read/write distinction removed"
+    )]
+    pub fn read_keys(self, keys: Vec<Vec<u8>>) -> Self {
+        self.keys(keys)
+    }
+
     /// Declare keys that will be written during this transaction
-    pub fn write_keys(mut self, keys: Vec<Vec<u8>>) -> Self {
-        self.write_keys.extend(keys);
-        self
+    ///
+    /// # Deprecated
+    ///
+    /// Use `keys()` instead. The read/write distinction is no longer used.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use keys() instead - read/write distinction removed"
+    )]
+    pub fn write_keys(self, keys: Vec<Vec<u8>>) -> Self {
+        self.keys(keys)
     }
 
     /// Add a validation function that runs with locks held
@@ -198,29 +229,18 @@ impl AsyncTransaction {
         F: FnOnce(&mut TransactionContext<'_>) -> Result<()> + Send + 'static,
     {
         let db = self.db;
-        let read_keys = self.read_keys;
-        let write_keys = self.write_keys;
+        let declared_keys = self.declared_keys;
         let validators = self.validators;
 
         tokio::task::spawn_blocking(move || {
-            // Phase 1: Acquire locks on declared keys
+            // Phase 1: Acquire locks on declared keys (sorted, deadlock-free)
             let lock_manager = db.canonical().lock_manager();
-
-            // Acquire read locks
-            let _read_locks: Vec<_> = read_keys
-                .iter()
-                .map(|key| lock_manager.read_lock(key))
-                .collect();
-
-            // Acquire write locks
-            let _write_locks: Vec<_> = write_keys
-                .iter()
-                .map(|key| lock_manager.write_lock(key))
-                .collect();
+            let keys_vec: Vec<&[u8]> = declared_keys.iter().map(|k| k.as_slice()).collect();
+            let _locks = lock_manager.acquire_keys(&keys_vec)?;
 
             // Phase 2: Preflight validation (with locks held!)
             let cache = db.canonical().preflight_cache();
-            let ctx = PreflightContext::new(&db, cache);
+            let ctx = PreflightContext::new(&db, cache, &declared_keys);
             for validator in validators {
                 validator(&ctx)?;
             }
@@ -229,6 +249,7 @@ impl AsyncTransaction {
             let txn = db.canonical().write_txn()?;
             let mut update_ctx = TransactionContext {
                 txn,
+                declared_keys: &declared_keys,
                 value_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
             };
 
@@ -236,7 +257,8 @@ impl AsyncTransaction {
 
             // Commit and invalidate cache for modified keys
             let commit_info = update_ctx.txn.commit()?;
-            cache.invalidate_keys(&write_keys);
+            let keys_to_invalidate: Vec<Vec<u8>> = declared_keys.iter().cloned().collect();
+            cache.invalidate_keys(&keys_to_invalidate);
 
             // Phase 5: Locks released here via RAII
 
@@ -249,19 +271,45 @@ impl AsyncTransaction {
 
 /// Preflight context for validation
 ///
-/// Provides read-only access to state during preflight phase
+/// Provides read-only access to state during preflight phase.
+/// Only keys declared via `Transaction::keys()` can be accessed.
 pub struct PreflightContext<'a> {
     db: &'a AzothDb,
     cache: &'a Arc<PreflightCache>,
+    declared_keys: &'a HashSet<Vec<u8>>,
 }
 
 impl<'a> PreflightContext<'a> {
-    fn new(db: &'a AzothDb, cache: &'a Arc<PreflightCache>) -> Self {
-        Self { db, cache }
+    fn new(
+        db: &'a AzothDb,
+        cache: &'a Arc<PreflightCache>,
+        declared_keys: &'a HashSet<Vec<u8>>,
+    ) -> Self {
+        Self {
+            db,
+            cache,
+            declared_keys,
+        }
+    }
+
+    /// Check if a key was declared for this transaction
+    fn check_key_declared(&self, key: &[u8]) -> Result<()> {
+        if !self.declared_keys.contains(key) {
+            return Err(AzothError::UndeclaredKeyAccess {
+                key: String::from_utf8_lossy(key).to_string(),
+            });
+        }
+        Ok(())
     }
 
     /// Get a typed value from state
+    ///
+    /// # Errors
+    ///
+    /// Returns `UndeclaredKeyAccess` if the key was not declared via `keys()`.
     pub fn get(&self, key: &[u8]) -> Result<TypedValue> {
+        self.check_key_declared(key)?;
+
         // Check cache first
         if let Some(cached) = self.cache.get(key) {
             match cached {
@@ -290,7 +338,13 @@ impl<'a> PreflightContext<'a> {
     }
 
     /// Get a typed value, returning None if key doesn't exist
+    ///
+    /// # Errors
+    ///
+    /// Returns `UndeclaredKeyAccess` if the key was not declared via `keys()`.
     pub fn get_opt(&self, key: &[u8]) -> Result<Option<TypedValue>> {
+        self.check_key_declared(key)?;
+
         // Check cache first
         if let Some(cached) = self.cache.get(key) {
             match cached {
@@ -317,7 +371,13 @@ impl<'a> PreflightContext<'a> {
     }
 
     /// Check if key exists
+    ///
+    /// # Errors
+    ///
+    /// Returns `UndeclaredKeyAccess` if the key was not declared via `keys()`.
     pub fn exists(&self, key: &[u8]) -> Result<bool> {
+        self.check_key_declared(key)?;
+
         // Check cache first
         if let Some(cached) = self.cache.get(key) {
             match cached {
@@ -344,14 +404,33 @@ impl<'a> PreflightContext<'a> {
 }
 
 /// Transaction context for state updates and event logging
+///
+/// Only keys declared via `Transaction::keys()` can be accessed.
 pub struct TransactionContext<'a> {
     txn: <crate::LmdbCanonicalStore as CanonicalStore>::Txn<'a>,
+    declared_keys: &'a HashSet<Vec<u8>>,
     value_cache: std::cell::RefCell<std::collections::HashMap<Vec<u8>, TypedValue>>,
 }
 
 impl<'a> TransactionContext<'a> {
+    /// Check if a key was declared for this transaction
+    fn check_key_declared(&self, key: &[u8]) -> Result<()> {
+        if !self.declared_keys.contains(key) {
+            return Err(AzothError::UndeclaredKeyAccess {
+                key: String::from_utf8_lossy(key).to_string(),
+            });
+        }
+        Ok(())
+    }
+
     /// Get a typed value from state
+    ///
+    /// # Errors
+    ///
+    /// Returns `UndeclaredKeyAccess` if the key was not declared via `keys()`.
     pub fn get(&self, key: &[u8]) -> Result<TypedValue> {
+        self.check_key_declared(key)?;
+
         // Check cache first
         {
             let cache = self.value_cache.borrow();
@@ -375,7 +454,13 @@ impl<'a> TransactionContext<'a> {
     }
 
     /// Get a typed value, returning None if key doesn't exist
+    ///
+    /// # Errors
+    ///
+    /// Returns `UndeclaredKeyAccess` if the key was not declared via `keys()`.
     pub fn get_opt(&self, key: &[u8]) -> Result<Option<TypedValue>> {
+        self.check_key_declared(key)?;
+
         // Check cache first
         {
             let cache = self.value_cache.borrow();
@@ -399,7 +484,13 @@ impl<'a> TransactionContext<'a> {
     }
 
     /// Set a key to a typed value
+    ///
+    /// # Errors
+    ///
+    /// Returns `UndeclaredKeyAccess` if the key was not declared via `keys()`.
     pub fn set(&mut self, key: &[u8], value: &TypedValue) -> Result<()> {
+        self.check_key_declared(key)?;
+
         let bytes = value.to_bytes()?;
         self.txn.put_state(key, &bytes)?;
         // Update cache with new value
@@ -410,7 +501,13 @@ impl<'a> TransactionContext<'a> {
     }
 
     /// Delete a key from state
+    ///
+    /// # Errors
+    ///
+    /// Returns `UndeclaredKeyAccess` if the key was not declared via `keys()`.
     pub fn delete(&mut self, key: &[u8]) -> Result<()> {
+        self.check_key_declared(key)?;
+
         self.txn.del_state(key)?;
         // Remove from cache
         self.value_cache.borrow_mut().remove(key);
@@ -418,7 +515,13 @@ impl<'a> TransactionContext<'a> {
     }
 
     /// Check if a key exists
+    ///
+    /// # Errors
+    ///
+    /// Returns `UndeclaredKeyAccess` if the key was not declared via `keys()`.
     pub fn exists(&self, key: &[u8]) -> Result<bool> {
+        self.check_key_declared(key)?;
+
         Ok(self.txn.get_state(key)?.is_some())
     }
 
@@ -426,10 +529,16 @@ impl<'a> TransactionContext<'a> {
     ///
     /// Reads the current value, applies the function, and writes the result.
     /// If the key doesn't exist, passes None to the function.
+    ///
+    /// # Errors
+    ///
+    /// Returns `UndeclaredKeyAccess` if the key was not declared via `keys()`.
     pub fn update<F>(&mut self, key: &[u8], f: F) -> Result<()>
     where
         F: FnOnce(Option<TypedValue>) -> Result<TypedValue>,
     {
+        self.check_key_declared(key)?;
+
         let old = self.get_opt(key)?;
         let new = f(old)?;
         self.set(key, &new)
@@ -478,17 +587,45 @@ impl<'a> TransactionContext<'a> {
 /// Provides a fluent API for building transactions with lock-based preflight,
 /// state updates, and event logging.
 ///
-/// The key insight: **Preflight is about lock acquisition**
-/// 1. Declare keys upfront (read_keys, write_keys)
-/// 2. Acquire stripe locks on those keys
-/// 3. Validate with locks held (ensures isolation)
-/// 4. Execute transaction (fast, serialized)
-/// 5. Release locks (RAII)
+/// # Deadlock Prevention
+///
+/// This implementation prevents deadlocks through:
+/// 1. **Automatic key sorting**: Locks are acquired in stripe index order
+/// 2. **Timeout-based acquisition**: Uses configurable timeout instead of blocking forever
+/// 3. **Strict key validation**: Only declared keys can be accessed
+///
+/// # Example
+///
+/// ```no_run
+/// use azoth::prelude::*;
+/// use azoth::{Transaction, TypedValue};
+///
+/// # fn main() -> Result<()> {
+/// let db = AzothDb::open("./data")?;
+///
+/// Transaction::new(&db)
+///     .keys(vec![b"account_a".to_vec(), b"account_b".to_vec()])
+///     .validate(|ctx| {
+///         let balance = ctx.get(b"account_a")?.as_i64()?;
+///         if balance < 100 {
+///             return Err(AzothError::PreflightFailed("Insufficient funds".into()));
+///         }
+///         Ok(())
+///     })
+///     .execute(|ctx| {
+///         let from = ctx.get(b"account_a")?.as_i64()?;
+///         let to = ctx.get(b"account_b")?.as_i64()?;
+///         ctx.set(b"account_a", &TypedValue::I64(from - 100))?;
+///         ctx.set(b"account_b", &TypedValue::I64(to + 100))?;
+///         Ok(())
+///     })?;
+/// # Ok(())
+/// # }
+/// ```
 #[allow(clippy::type_complexity)]
 pub struct Transaction<'a> {
     db: &'a AzothDb,
-    read_keys: Vec<Vec<u8>>,  // Keys to acquire read locks on
-    write_keys: Vec<Vec<u8>>, // Keys to acquire write locks on
+    declared_keys: HashSet<Vec<u8>>,
     validators: Vec<Box<dyn FnOnce(&PreflightContext) -> Result<()> + 'a>>,
 }
 
@@ -497,28 +634,50 @@ impl<'a> Transaction<'a> {
     pub fn new(db: &'a AzothDb) -> Self {
         Self {
             db,
-            read_keys: Vec::new(),
-            write_keys: Vec::new(),
+            declared_keys: HashSet::new(),
             validators: Vec::new(),
         }
     }
 
+    /// Declare keys that will be accessed during this transaction
+    ///
+    /// All keys that will be read or written must be declared upfront.
+    /// This enables:
+    /// - Deadlock-free lock acquisition (keys are locked in sorted order)
+    /// - Strict validation (accessing undeclared keys is an error)
+    ///
+    /// Keys can be declared in any order - they will be sorted internally.
+    pub fn keys(mut self, keys: Vec<Vec<u8>>) -> Self {
+        self.declared_keys.extend(keys);
+        self
+    }
+
     /// Declare keys that will be read during this transaction
     ///
-    /// These keys will have read locks acquired during preflight.
-    /// Multiple readers can hold read locks concurrently.
-    pub fn read_keys(mut self, keys: Vec<Vec<u8>>) -> Self {
-        self.read_keys.extend(keys);
-        self
+    /// # Deprecated
+    ///
+    /// Use `keys()` instead. The read/write distinction is no longer used
+    /// for lock acquisition (all locks are now exclusive).
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use keys() instead - read/write distinction removed"
+    )]
+    pub fn read_keys(self, keys: Vec<Vec<u8>>) -> Self {
+        self.keys(keys)
     }
 
     /// Declare keys that will be written during this transaction
     ///
-    /// These keys will have write locks acquired during preflight.
-    /// Write locks are exclusive (no other readers or writers).
-    pub fn write_keys(mut self, keys: Vec<Vec<u8>>) -> Self {
-        self.write_keys.extend(keys);
-        self
+    /// # Deprecated
+    ///
+    /// Use `keys()` instead. The read/write distinction is no longer used
+    /// for lock acquisition (all locks are now exclusive).
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use keys() instead - read/write distinction removed"
+    )]
+    pub fn write_keys(self, keys: Vec<Vec<u8>>) -> Self {
+        self.keys(keys)
     }
 
     /// Add a validation function that runs with locks held
@@ -538,20 +697,21 @@ impl<'a> Transaction<'a> {
     ///
     /// Preflight functions run before the transaction begins and can validate
     /// constraints on the current state.
-    pub fn preflight<F>(mut self, f: F) -> Self
+    pub fn preflight<F>(self, f: F) -> Self
     where
         F: FnOnce(&PreflightContext) -> Result<()> + 'a,
     {
-        self.validators.push(Box::new(f));
-        self
+        self.validate(f)
     }
 
     /// Add a constraint with arbitrary validation logic on a key
+    ///
+    /// Automatically adds the key to declared keys.
     pub fn require<F>(mut self, key: Vec<u8>, validator: F) -> Self
     where
         F: FnOnce(Option<TypedValue>) -> Result<()> + 'a,
     {
-        self.read_keys.push(key.clone());
+        self.declared_keys.insert(key.clone());
         self.validators.push(Box::new(move |ctx| {
             let value = ctx.get_opt(&key)?;
             validator(value)
@@ -560,7 +720,10 @@ impl<'a> Transaction<'a> {
     }
 
     /// Add a constraint that a key must exist
-    pub fn require_exists(self, key: Vec<u8>) -> Self {
+    ///
+    /// Automatically adds the key to declared keys.
+    pub fn require_exists(mut self, key: Vec<u8>) -> Self {
+        self.declared_keys.insert(key.clone());
         self.preflight(move |ctx| {
             if !ctx.exists(&key)? {
                 return Err(AzothError::PreflightFailed(format!(
@@ -573,7 +736,10 @@ impl<'a> Transaction<'a> {
     }
 
     /// Add a constraint that a typed value must be >= minimum (I64)
-    pub fn require_min(self, key: Vec<u8>, min: i64) -> Self {
+    ///
+    /// Automatically adds the key to declared keys.
+    pub fn require_min(mut self, key: Vec<u8>, min: i64) -> Self {
+        self.declared_keys.insert(key.clone());
         self.preflight(move |ctx| {
             let value = ctx.get(&key)?.as_i64()?;
             if value < min {
@@ -587,7 +753,10 @@ impl<'a> Transaction<'a> {
     }
 
     /// Add a constraint that a typed value must be <= maximum (I64)
-    pub fn require_max(self, key: Vec<u8>, max: i64) -> Self {
+    ///
+    /// Automatically adds the key to declared keys.
+    pub fn require_max(mut self, key: Vec<u8>, max: i64) -> Self {
+        self.declared_keys.insert(key.clone());
         self.preflight(move |ctx| {
             let value = ctx.get(&key)?.as_i64()?;
             if value > max {
@@ -617,9 +786,9 @@ impl<'a> Transaction<'a> {
     /// # Phases
     ///
     /// This runs all phases with proper lock-based isolation:
-    /// 1. Acquire stripe locks on all declared keys (parallel across non-conflicting keys)
+    /// 1. Acquire stripe locks on all declared keys (sorted order, deadlock-free)
     /// 2. Preflight validation (with locks held - state cannot change)
-    /// 3. If preflight passes, submit to FIFO commit queue (serialized, single-writer)
+    /// 3. Begin LMDB transaction
     /// 4. Apply state updates (KV operations)
     /// 5. Append events (log operations)
     /// 6. Atomic commit (state + events together)
@@ -631,10 +800,12 @@ impl<'a> Transaction<'a> {
     /// - **Commit**: Serialized (FIFO queue, single-writer for determinism)
     /// - **Locks**: Held from preflight start through commit, then released
     ///
-    /// This design enables:
-    /// - High throughput preflight (50-200k/sec parallel validation)
-    /// - Fast serialized commits (20-50k/sec with no validation overhead)
-    /// - Strong isolation (validated state == committed state)
+    /// # Errors
+    ///
+    /// - `LockTimeout`: Lock acquisition timed out (possible contention)
+    /// - `UndeclaredKeyAccess`: Tried to access a key not declared via `keys()`
+    /// - `PreflightFailed`: Validation failed
+    /// - Other errors from state access or event logging
     pub fn execute<F>(self, f: F) -> Result<CommitInfo>
     where
         F: for<'b> FnOnce(&mut TransactionContext<'b>) -> Result<()>,
@@ -659,26 +830,14 @@ impl<'a> Transaction<'a> {
             }
         }
 
-        // Phase 1: Acquire locks on declared keys
+        // Phase 1: Acquire locks on declared keys (sorted, deadlock-free)
         let lock_manager = self.db.canonical().lock_manager();
-
-        // Acquire read locks
-        let _read_locks: Vec<_> = self
-            .read_keys
-            .iter()
-            .map(|key| lock_manager.read_lock(key))
-            .collect();
-
-        // Acquire write locks
-        let _write_locks: Vec<_> = self
-            .write_keys
-            .iter()
-            .map(|key| lock_manager.write_lock(key))
-            .collect();
+        let keys_vec: Vec<&[u8]> = self.declared_keys.iter().map(|k| k.as_slice()).collect();
+        let _locks = lock_manager.acquire_keys(&keys_vec)?;
 
         // Phase 2: Preflight validation (with locks held!)
         let cache = self.db.canonical().preflight_cache();
-        let ctx = PreflightContext::new(self.db, cache);
+        let ctx = PreflightContext::new(self.db, cache, &self.declared_keys);
         for validator in self.validators {
             validator(&ctx)?;
         }
@@ -687,6 +846,7 @@ impl<'a> Transaction<'a> {
         let txn = self.db.canonical().write_txn()?;
         let mut update_ctx = TransactionContext {
             txn,
+            declared_keys: &self.declared_keys,
             value_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
         };
 
@@ -694,9 +854,10 @@ impl<'a> Transaction<'a> {
 
         // Commit and invalidate cache for modified keys
         let commit_info = update_ctx.txn.commit()?;
-        cache.invalidate_keys(&self.write_keys);
+        let keys_to_invalidate: Vec<Vec<u8>> = self.declared_keys.iter().cloned().collect();
+        cache.invalidate_keys(&keys_to_invalidate);
 
-        // Phase 5: Locks released here via RAII when _read_locks and _write_locks go out of scope
+        // Phase 5: Locks released here via RAII when _locks goes out of scope
 
         Ok(commit_info)
     }
@@ -743,26 +904,14 @@ impl<'a> Transaction<'a> {
     {
         // No async safety check - caller takes responsibility
 
-        // Phase 1: Acquire locks on declared keys
+        // Phase 1: Acquire locks on declared keys (sorted, deadlock-free)
         let lock_manager = self.db.canonical().lock_manager();
-
-        // Acquire read locks
-        let _read_locks: Vec<_> = self
-            .read_keys
-            .iter()
-            .map(|key| lock_manager.read_lock(key))
-            .collect();
-
-        // Acquire write locks
-        let _write_locks: Vec<_> = self
-            .write_keys
-            .iter()
-            .map(|key| lock_manager.write_lock(key))
-            .collect();
+        let keys_vec: Vec<&[u8]> = self.declared_keys.iter().map(|k| k.as_slice()).collect();
+        let _locks = lock_manager.acquire_keys(&keys_vec)?;
 
         // Phase 2: Preflight validation (with locks held!)
         let cache = self.db.canonical().preflight_cache();
-        let ctx = PreflightContext::new(self.db, cache);
+        let ctx = PreflightContext::new(self.db, cache, &self.declared_keys);
         for validator in self.validators {
             validator(&ctx)?;
         }
@@ -771,6 +920,7 @@ impl<'a> Transaction<'a> {
         let txn = self.db.canonical().write_txn()?;
         let mut update_ctx = TransactionContext {
             txn,
+            declared_keys: &self.declared_keys,
             value_cache: std::cell::RefCell::new(std::collections::HashMap::new()),
         };
 
@@ -778,7 +928,8 @@ impl<'a> Transaction<'a> {
 
         // Commit and invalidate cache for modified keys
         let commit_info = update_ctx.txn.commit()?;
-        cache.invalidate_keys(&self.write_keys);
+        let keys_to_invalidate: Vec<Vec<u8>> = self.declared_keys.iter().cloned().collect();
+        cache.invalidate_keys(&keys_to_invalidate);
 
         Ok(commit_info)
     }
@@ -793,8 +944,7 @@ impl<'a> Transaction<'a> {
 /// # Arguments
 ///
 /// * `db` - An `Arc<AzothDb>` (cloned into the blocking task)
-/// * `write_keys` - Keys that will be written (for lock acquisition)
-/// * `read_keys` - Keys that will be read (for lock acquisition)
+/// * `keys` - Keys that will be accessed (for lock acquisition)
 /// * `f` - The transaction function to execute
 ///
 /// # Example
@@ -810,7 +960,6 @@ impl<'a> Transaction<'a> {
 /// execute_transaction_async(
 ///     db.clone(),
 ///     vec![b"balance".to_vec()],
-///     vec![],
 ///     |ctx| {
 ///         ctx.set(b"balance", &TypedValue::I64(100))?;
 ///         ctx.log_bytes(b"init:100")?;
@@ -822,21 +971,15 @@ impl<'a> Transaction<'a> {
 /// ```
 pub async fn execute_transaction_async<F>(
     db: Arc<AzothDb>,
-    write_keys: Vec<Vec<u8>>,
-    read_keys: Vec<Vec<u8>>,
+    keys: Vec<Vec<u8>>,
     f: F,
 ) -> Result<CommitInfo>
 where
     F: for<'b> FnOnce(&mut TransactionContext<'b>) -> Result<()> + Send + 'static,
 {
-    tokio::task::spawn_blocking(move || {
-        Transaction::new(&db)
-            .write_keys(write_keys)
-            .read_keys(read_keys)
-            .execute(f)
-    })
-    .await
-    .map_err(|e| AzothError::Internal(format!("Transaction task failed: {}", e)))?
+    tokio::task::spawn_blocking(move || Transaction::new(&db).keys(keys).execute(f))
+        .await
+        .map_err(|e| AzothError::Internal(format!("Transaction task failed: {}", e)))?
 }
 
 #[cfg(test)]
@@ -862,6 +1005,7 @@ mod tests {
 
         // Transaction with preflight and update
         let result = Transaction::new(&db)
+            .keys(vec![b"balance".to_vec()])
             .preflight(|ctx| {
                 let balance = ctx.get(b"balance")?.as_i64()?;
                 assert_eq!(balance, 100);
@@ -880,7 +1024,7 @@ mod tests {
         assert!(result.is_ok());
 
         // Verify final balance
-        let txn = db.canonical().write_txn().unwrap();
+        let txn = db.canonical().read_txn().unwrap();
         let balance_bytes = txn.get_state(b"balance").unwrap().unwrap();
         let balance = TypedValue::from_bytes(&balance_bytes)
             .unwrap()
@@ -910,7 +1054,7 @@ mod tests {
         assert!(result.is_err());
 
         // Balance should be unchanged
-        let txn = db.canonical().write_txn().unwrap();
+        let txn = db.canonical().read_txn().unwrap();
         let balance_bytes = txn.get_state(b"balance").unwrap().unwrap();
         let balance = TypedValue::from_bytes(&balance_bytes)
             .unwrap()
@@ -946,6 +1090,7 @@ mod tests {
     fn test_multiple_events() {
         let (db, _temp) = create_test_db();
 
+        // Note: No keys needed for event-only transactions
         let result = Transaction::new(&db).execute(|ctx| {
             ctx.log_bytes(b"event1")?;
             ctx.log_bytes(b"event2")?;
@@ -955,5 +1100,132 @@ mod tests {
 
         let commit_info = result.unwrap();
         assert_eq!(commit_info.events_written, 3);
+    }
+
+    #[test]
+    fn test_undeclared_key_access_in_preflight() {
+        let (db, _temp) = create_test_db();
+
+        // Initialize
+        let mut txn = db.canonical().write_txn().unwrap();
+        txn.put_state(b"key1", &TypedValue::I64(1).to_bytes().unwrap())
+            .unwrap();
+        txn.put_state(b"key2", &TypedValue::I64(2).to_bytes().unwrap())
+            .unwrap();
+        txn.commit().unwrap();
+
+        // Only declare key1, try to access key2
+        let result = Transaction::new(&db)
+            .keys(vec![b"key1".to_vec()])
+            .validate(|ctx| {
+                let _ = ctx.get(b"key1")?; // OK
+                let _ = ctx.get(b"key2")?; // Should fail
+                Ok(())
+            })
+            .execute(|_ctx| Ok(()));
+
+        assert!(matches!(
+            result,
+            Err(AzothError::UndeclaredKeyAccess { .. })
+        ));
+    }
+
+    #[test]
+    fn test_undeclared_key_access_in_execute() {
+        let (db, _temp) = create_test_db();
+
+        // Initialize
+        let mut txn = db.canonical().write_txn().unwrap();
+        txn.put_state(b"key1", &TypedValue::I64(1).to_bytes().unwrap())
+            .unwrap();
+        txn.put_state(b"key2", &TypedValue::I64(2).to_bytes().unwrap())
+            .unwrap();
+        txn.commit().unwrap();
+
+        // Only declare key1, try to access key2
+        let result = Transaction::new(&db)
+            .keys(vec![b"key1".to_vec()])
+            .execute(|ctx| {
+                let _ = ctx.get(b"key1")?; // OK
+                ctx.set(b"key2", &TypedValue::I64(99))?; // Should fail
+                Ok(())
+            });
+
+        assert!(matches!(
+            result,
+            Err(AzothError::UndeclaredKeyAccess { .. })
+        ));
+    }
+
+    #[test]
+    fn test_require_auto_declares_key() {
+        let (db, _temp) = create_test_db();
+
+        // Initialize
+        let mut txn = db.canonical().write_txn().unwrap();
+        txn.put_state(b"balance", &TypedValue::I64(100).to_bytes().unwrap())
+            .unwrap();
+        txn.commit().unwrap();
+
+        // require_min should auto-declare the key
+        let result = Transaction::new(&db)
+            .require_min(b"balance".to_vec(), 50)
+            .execute(|ctx| {
+                // Should be able to access balance since require_min declared it
+                ctx.set(b"balance", &TypedValue::I64(75))?;
+                Ok(())
+            });
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_multi_key_transaction() {
+        let (db, _temp) = create_test_db();
+
+        // Initialize two accounts
+        let mut txn = db.canonical().write_txn().unwrap();
+        txn.put_state(b"account_a", &TypedValue::I64(1000).to_bytes().unwrap())
+            .unwrap();
+        txn.put_state(b"account_b", &TypedValue::I64(500).to_bytes().unwrap())
+            .unwrap();
+        txn.commit().unwrap();
+
+        // Transfer between accounts - keys can be in any order
+        let result = Transaction::new(&db)
+            .keys(vec![b"account_b".to_vec(), b"account_a".to_vec()]) // Unsorted order is fine
+            .validate(|ctx| {
+                let balance = ctx.get(b"account_a")?.as_i64()?;
+                if balance < 100 {
+                    return Err(AzothError::PreflightFailed("Insufficient funds".into()));
+                }
+                Ok(())
+            })
+            .execute(|ctx| {
+                let a = ctx.get(b"account_a")?.as_i64()?;
+                let b = ctx.get(b"account_b")?.as_i64()?;
+                ctx.set(b"account_a", &TypedValue::I64(a - 100))?;
+                ctx.set(b"account_b", &TypedValue::I64(b + 100))?;
+                ctx.log(
+                    "transfer",
+                    &serde_json::json!({"from": "a", "to": "b", "amount": 100}),
+                )?;
+                Ok(())
+            });
+
+        assert!(result.is_ok());
+
+        // Verify balances
+        let txn = db.canonical().read_txn().unwrap();
+        let a = TypedValue::from_bytes(&txn.get_state(b"account_a").unwrap().unwrap())
+            .unwrap()
+            .as_i64()
+            .unwrap();
+        let b = TypedValue::from_bytes(&txn.get_state(b"account_b").unwrap().unwrap())
+            .unwrap()
+            .as_i64()
+            .unwrap();
+        assert_eq!(a, 900);
+        assert_eq!(b, 600);
     }
 }

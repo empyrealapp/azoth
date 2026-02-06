@@ -38,7 +38,7 @@ impl Consumer {
         let meta_bytes = serde_json::to_vec(&meta)?;
 
         Transaction::new(&db)
-            .write_keys(vec![meta_key.clone()])
+            .keys(vec![meta_key.clone()])
             .execute(|ctx| {
                 // Only write if not exists
                 if ctx.get_opt(&meta_key)?.is_none() {
@@ -89,7 +89,7 @@ impl Consumer {
         if event_id == 0 {
             // Reset to beginning - delete cursor
             Transaction::new(&self.db)
-                .write_keys(vec![self.cursor_key.clone()])
+                .keys(vec![self.cursor_key.clone()])
                 .execute(|ctx| {
                     ctx.delete(&self.cursor_key)?;
                     Ok(())
@@ -97,7 +97,7 @@ impl Consumer {
         } else {
             // Set cursor to event_id - 1 so next() reads from event_id
             Transaction::new(&self.db)
-                .write_keys(vec![self.cursor_key.clone()])
+                .keys(vec![self.cursor_key.clone()])
                 .execute(|ctx| {
                     ctx.set(&self.cursor_key, &TypedValue::I64((event_id - 1) as i64))?;
                     Ok(())
@@ -140,7 +140,7 @@ impl Consumer {
         let cursor_key = self.cursor_key.clone();
 
         Transaction::new(&self.db)
-            .write_keys(vec![cursor_key.clone(), meta_key.clone()])
+            .keys(vec![cursor_key.clone(), meta_key.clone()])
             .execute(|ctx| {
                 // Update cursor
                 ctx.set(&cursor_key, &TypedValue::I64(event_id as i64))?;
@@ -178,7 +178,7 @@ impl Consumer {
         let cursor_key = self.cursor_key.clone();
 
         AsyncTransaction::new(self.db.clone())
-            .write_keys(vec![cursor_key.clone(), meta_key.clone()])
+            .keys(vec![cursor_key.clone(), meta_key.clone()])
             .execute(move |ctx| {
                 // Update cursor
                 ctx.set(&cursor_key, &TypedValue::I64(event_id as i64))?;

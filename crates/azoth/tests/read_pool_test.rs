@@ -34,6 +34,7 @@ fn test_read_txn_trait_works() {
 
     // Write some test data
     Transaction::new(&db)
+        .keys(vec![b"key1".to_vec(), b"key2".to_vec()])
         .execute(|ctx| {
             ctx.set(b"key1", &TypedValue::I64(100))?;
             ctx.set(b"key2", &TypedValue::I64(200))?;
@@ -80,7 +81,11 @@ fn test_concurrent_reads_without_pool() {
     let db = Arc::new(db);
 
     // Write test data
+    let keys: Vec<Vec<u8>> = (0..100)
+        .map(|i| format!("key-{}", i).into_bytes())
+        .collect();
     Transaction::new(&db)
+        .keys(keys)
         .execute(|ctx| {
             for i in 0..100 {
                 let key = format!("key-{}", i);
@@ -127,7 +132,11 @@ async fn test_lmdb_read_pool_concurrent_async() {
     let db = Arc::new(db);
 
     // Write test data using execute_blocking (we're in async context)
+    let keys: Vec<Vec<u8>> = (0..10)
+        .map(|i| format!("async-key-{}", i).into_bytes())
+        .collect();
     Transaction::new(&db)
+        .keys(keys)
         .execute_blocking(|ctx| {
             for i in 0..10 {
                 let key = format!("async-key-{}", i);
@@ -164,6 +173,7 @@ async fn test_lmdb_read_pool_exhaustion_and_recovery() {
 
     // Write test data using execute_blocking (we're in async context)
     Transaction::new(&db)
+        .keys(vec![b"test-key".to_vec()])
         .execute_blocking(|ctx| {
             ctx.set(b"test-key", &TypedValue::I64(42))?;
             Ok(())
@@ -207,6 +217,7 @@ fn test_read_txn_doesnt_block_write() {
 
     // Write initial data
     Transaction::new(&db)
+        .keys(vec![b"counter".to_vec()])
         .execute(|ctx| {
             ctx.set(b"counter", &TypedValue::I64(0))?;
             Ok(())
@@ -244,10 +255,12 @@ fn test_read_txn_doesnt_block_write() {
 
     // Write while another thread holds read - should NOT deadlock
     // (This would have deadlocked with the old footgun implementation)
-    let write_result = Transaction::new(&db).execute(|ctx| {
-        ctx.set(b"counter", &TypedValue::I64(1))?;
-        Ok(())
-    });
+    let write_result = Transaction::new(&db)
+        .keys(vec![b"counter".to_vec()])
+        .execute(|ctx| {
+            ctx.set(b"counter", &TypedValue::I64(1))?;
+            Ok(())
+        });
     assert!(write_result.is_ok());
 
     // Signal read thread that write is done
