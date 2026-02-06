@@ -12,12 +12,14 @@ pub use crate::{
 };
 
 // Configs
-pub use crate::{CanonicalConfig, ProjectionConfig, ProjectorConfig, SyncMode, SynchronousMode};
+pub use crate::{
+    CanonicalConfig, ProjectionConfig, ProjectorConfig, ReadPoolConfig, SyncMode, SynchronousMode,
+};
 
 // Traits
 pub use crate::{
-    CanonicalStore, CanonicalTxn, DecodedEvent, EventApplier, EventDecoder, ProjectionStore,
-    ProjectionTxn,
+    CanonicalReadTxn, CanonicalStore, CanonicalTxn, DecodedEvent, EventApplier, EventDecoder,
+    ProjectionStore, ProjectionTxn,
 };
 
 // Implementations

@@ -1,3 +1,4 @@
+use super::canonical::ReadPoolConfig;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -25,6 +26,13 @@ pub struct ProjectionConfig {
     /// Default: -64000 (64MB)
     #[serde(default = "default_cache_size")]
     pub cache_size: i32,
+
+    /// Read pool configuration (optional, disabled by default)
+    ///
+    /// When enabled, maintains a pool of read-only connections for
+    /// concurrent read access without blocking writes.
+    #[serde(default)]
+    pub read_pool: ReadPoolConfig,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -58,6 +66,7 @@ impl ProjectionConfig {
             synchronous: SynchronousMode::default(),
             schema_version: default_schema_version(),
             cache_size: default_cache_size(),
+            read_pool: ReadPoolConfig::default(),
         }
     }
 
@@ -68,6 +77,18 @@ impl ProjectionConfig {
 
     pub fn with_wal_mode(mut self, wal_mode: bool) -> Self {
         self.wal_mode = wal_mode;
+        self
+    }
+
+    /// Configure read connection pooling
+    pub fn with_read_pool(mut self, config: ReadPoolConfig) -> Self {
+        self.read_pool = config;
+        self
+    }
+
+    /// Enable read pooling with the specified pool size
+    pub fn with_read_pool_size(mut self, pool_size: usize) -> Self {
+        self.read_pool = ReadPoolConfig::enabled(pool_size);
         self
     }
 }

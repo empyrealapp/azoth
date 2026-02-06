@@ -1,7 +1,7 @@
 use azoth_core::{
     error::{AzothError, Result},
     event_log::EventLog,
-    traits::{CanonicalTxn, PreflightResult},
+    traits::{CanonicalReadTxn, CanonicalTxn, PreflightResult},
     types::{CommitInfo, EventId},
 };
 use azoth_file_log::FileEventLog;
@@ -49,12 +49,15 @@ pub struct LmdbReadTxn<'a> {
 }
 
 impl<'a> LmdbReadTxn<'a> {
+    /// Create a new read-only transaction
     pub fn new(txn: RoTransaction<'a>, state_db: Database) -> Self {
         Self { txn, state_db }
     }
+}
 
+impl<'a> CanonicalReadTxn for LmdbReadTxn<'a> {
     /// Get state value by key
-    pub fn get_state(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+    fn get_state(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
         match self.txn.get(self.state_db, &key) {
             Ok(bytes) => Ok(Some(bytes.to_vec())),
             Err(lmdb::Error::NotFound) => Ok(None),
