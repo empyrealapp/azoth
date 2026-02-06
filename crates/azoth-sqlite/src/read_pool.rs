@@ -10,7 +10,7 @@ use azoth_core::{
 use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{Semaphore, SemaphorePermit};
 
 /// A pooled read-only connection for SQLite
@@ -175,6 +175,28 @@ impl SqliteReadPool {
     /// Get the pool size
     pub fn pool_size(&self) -> usize {
         self.connections.len()
+    }
+
+    /// Acquire a pooled read-only connection (blocking)
+    ///
+    /// Blocks up to `acquire_timeout` waiting for an available connection.
+    pub fn acquire_blocking(&self) -> Result<PooledSqliteConnection<'_>> {
+        let deadline = Instant::now() + self.acquire_timeout;
+
+        loop {
+            if let Ok(Some(conn)) = self.try_acquire() {
+                return Ok(conn);
+            }
+
+            if Instant::now() >= deadline {
+                return Err(AzothError::Timeout(format!(
+                    "Read pool acquire timeout after {:?}",
+                    self.acquire_timeout
+                )));
+            }
+
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
 }
 

@@ -100,6 +100,7 @@ async fn main() -> Result<()> {
 
     // Setup SQL table
     let db_path = temp_dir.path().join("accounts.db");
+    #[allow(clippy::arc_with_non_send_sync)]
     let conn =
         Arc::new(Connection::open(&db_path).map_err(|e| AzothError::Projection(e.to_string()))?);
 
@@ -140,7 +141,7 @@ async fn main() -> Result<()> {
 
         if i % 2 == 0 {
             // Deposit
-            Transaction::new(&*db).execute(|ctx| {
+            Transaction::new(&db).execute(|ctx| {
                 ctx.log(
                     "deposit",
                     &DepositPayload {
@@ -153,7 +154,7 @@ async fn main() -> Result<()> {
             println!("   📝 Wrote deposit event for account {}", account_id);
         } else {
             // Withdraw
-            Transaction::new(&*db).execute(|ctx| {
+            Transaction::new(&db).execute(|ctx| {
                 ctx.log(
                     "withdraw",
                     &WithdrawPayload {

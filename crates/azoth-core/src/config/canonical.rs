@@ -133,6 +133,14 @@ pub struct CanonicalConfig {
     /// `LockTimeout` error instead of blocking indefinitely.
     #[serde(default = "default_lock_timeout")]
     pub lock_timeout_ms: u64,
+
+    /// Maximum size of a single event payload in bytes (default: 4MB)
+    #[serde(default = "default_event_max_size")]
+    pub event_max_size_bytes: usize,
+
+    /// Maximum total size for a single event batch append in bytes (default: 64MB)
+    #[serde(default = "default_event_batch_max_bytes")]
+    pub event_batch_max_bytes: usize,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -178,6 +186,14 @@ fn default_lock_timeout() -> u64 {
     5000
 }
 
+fn default_event_max_size() -> usize {
+    4 * 1024 * 1024
+}
+
+fn default_event_batch_max_bytes() -> usize {
+    64 * 1024 * 1024
+}
+
 impl CanonicalConfig {
     pub fn new(path: PathBuf) -> Self {
         Self {
@@ -193,6 +209,8 @@ impl CanonicalConfig {
             preflight_cache_ttl_secs: default_preflight_cache_ttl(),
             read_pool: ReadPoolConfig::default(),
             lock_timeout_ms: default_lock_timeout(),
+            event_max_size_bytes: default_event_max_size(),
+            event_batch_max_bytes: default_event_batch_max_bytes(),
         }
     }
 
@@ -244,6 +262,18 @@ impl CanonicalConfig {
     /// transaction preflight. Default is 5000ms.
     pub fn with_lock_timeout(mut self, timeout_ms: u64) -> Self {
         self.lock_timeout_ms = timeout_ms;
+        self
+    }
+
+    /// Set maximum event payload size in bytes.
+    pub fn with_event_max_size(mut self, size_bytes: usize) -> Self {
+        self.event_max_size_bytes = size_bytes;
+        self
+    }
+
+    /// Set maximum event batch size in bytes.
+    pub fn with_event_batch_max_bytes(mut self, size_bytes: usize) -> Self {
+        self.event_batch_max_bytes = size_bytes;
         self
     }
 }

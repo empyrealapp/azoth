@@ -23,6 +23,7 @@ tokio = { workspace = true, features = ["time", "sync"] }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

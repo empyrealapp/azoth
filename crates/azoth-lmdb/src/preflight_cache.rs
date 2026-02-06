@@ -7,6 +7,8 @@
 //! - Invalidation on transaction commit for modified keys
 
 use dashmap::DashMap;
+use parking_lot::Mutex;
+use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -42,14 +44,14 @@ impl CacheEntry {
 /// Thread-safe in-memory cache for preflight reads.
 ///
 /// Uses DashMap for lock-free concurrent access and tracks insertion order
-/// for LRU eviction.
+/// with an O(1) bounded eviction queue.
 pub struct PreflightCache {
     cache: Arc<DashMap<Vec<u8>, CacheEntry>>,
     capacity: usize,
     ttl: Duration,
     enabled: bool,
-    /// Track insertion order for LRU eviction (key, inserted_at)
-    lru_tracker: Arc<DashMap<Vec<u8>, Instant>>,
+    /// FIFO queue used to bound cache size without O(n) scans.
+    eviction_queue: Arc<Mutex<VecDeque<Vec<u8>>>>,
 }
 
 impl PreflightCache {
@@ -65,7 +67,7 @@ impl PreflightCache {
             capacity,
             ttl: Duration::from_secs(ttl_secs),
             enabled,
-            lru_tracker: Arc::new(DashMap::with_capacity(capacity)),
+            eviction_queue: Arc::new(Mutex::new(VecDeque::with_capacity(capacity))),
         }
     }
 
@@ -89,7 +91,6 @@ impl PreflightCache {
         if entry.is_expired(self.ttl) {
             drop(entry); // Release read lock
             self.cache.remove(key);
-            self.lru_tracker.remove(key);
             return None;
         }
 
@@ -105,14 +106,12 @@ impl PreflightCache {
             return;
         }
 
-        // Check if we need to evict
         if self.cache.len() >= self.capacity && !self.cache.contains_key(&key) {
-            self.evict_lru();
+            self.evict_one();
         }
 
-        let now = Instant::now();
         self.cache.insert(key.clone(), CacheEntry::new(value));
-        self.lru_tracker.insert(key, now);
+        self.eviction_queue.lock().push_back(key);
     }
 
     /// Invalidate (remove) specific keys from the cache.
@@ -125,24 +124,20 @@ impl PreflightCache {
 
         for key in keys {
             self.cache.remove(key);
-            self.lru_tracker.remove(key);
         }
     }
 
-    /// Evict the least recently used entry from the cache.
-    fn evict_lru(&self) {
-        if let Some(oldest_key) = self.find_oldest_key() {
-            self.cache.remove(&oldest_key);
-            self.lru_tracker.remove(&oldest_key);
+    /// Evict one key from the cache in amortized O(1) time.
+    ///
+    /// The queue may contain stale duplicate keys; those are skipped until
+    /// a currently present key is removed.
+    fn evict_one(&self) {
+        let mut queue = self.eviction_queue.lock();
+        while let Some(key) = queue.pop_front() {
+            if self.cache.remove(&key).is_some() {
+                break;
+            }
         }
-    }
-
-    /// Find the key with the oldest insertion time.
-    fn find_oldest_key(&self) -> Option<Vec<u8>> {
-        self.lru_tracker
-            .iter()
-            .min_by_key(|entry| *entry.value())
-            .map(|entry| entry.key().clone())
     }
 
     /// Clear all entries from the cache.
@@ -152,7 +147,7 @@ impl PreflightCache {
         }
 
         self.cache.clear();
-        self.lru_tracker.clear();
+        self.eviction_queue.lock().clear();
     }
 
     /// Get cache statistics.

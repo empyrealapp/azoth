@@ -905,7 +905,12 @@ mod tests {
 
         // Should fail when deserializing to wrong type
         let result: Result<Post> = value.to_json();
-        assert!(result.is_err());
+        if let Ok(post) = result {
+            panic!(
+                "Expected type mismatch error, got Post {{ id: {}, title: {} }}",
+                post.id, post.title
+            );
+        }
     }
 
     #[test]
