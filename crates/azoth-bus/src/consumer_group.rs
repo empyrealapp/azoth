@@ -96,7 +96,7 @@ impl ConsumerGroup {
         let meta_bytes = serde_json::to_vec(&meta)?;
 
         Transaction::new(&self.db)
-            .write_keys(vec![meta_key.clone()])
+            .keys(vec![meta_key.clone()])
             .execute(|ctx| {
                 ctx.set(&meta_key, &TypedValue::Bytes(meta_bytes))?;
                 Ok(())
@@ -233,7 +233,7 @@ impl GroupMember {
                 let mut claimed = false;
 
                 let result = Transaction::new(&self.db)
-                    .write_keys(vec![cursor_key.clone(), claim_key.clone()])
+                    .keys(vec![cursor_key.clone(), claim_key.clone()])
                     .execute(|ctx| {
                         // Check if already claimed
                         if ctx.exists(&claim_key)? {
@@ -273,7 +273,7 @@ impl GroupMember {
                     let mut claimed = false;
 
                     Transaction::new(&self.db)
-                        .write_keys(vec![reclaim_key.clone(), claim_key.clone()])
+                        .keys(vec![reclaim_key.clone(), claim_key.clone()])
                         .execute(|ctx| {
                             // Check reclaim list again
                             let mut events: Vec<u64> =
@@ -335,7 +335,7 @@ impl GroupMember {
         let claim_key = self.claim_key_for(event_id).into_bytes();
 
         Transaction::new(&self.db)
-            .write_keys(vec![reclaim_key.clone(), claim_key.clone()])
+            .keys(vec![reclaim_key.clone(), claim_key.clone()])
             .execute(|ctx| {
                 // Delete claim
                 ctx.delete(&claim_key)?;
@@ -405,31 +405,29 @@ impl GroupMember {
 
         let count = expired.len() as u64;
 
-        Transaction::new(&self.db)
-            .write_keys(write_keys)
-            .execute(|ctx| {
-                // Load current reclaim list
-                let mut reclaim_list: Vec<u64> =
-                    if let Some(TypedValue::Bytes(json_bytes)) = ctx.get_opt(&reclaim_key)? {
-                        serde_json::from_slice(&json_bytes)
-                            .map_err(|e| anyhow::anyhow!("Failed to parse reclaim list: {}", e))?
-                    } else {
-                        Vec::new()
-                    };
+        Transaction::new(&self.db).keys(write_keys).execute(|ctx| {
+            // Load current reclaim list
+            let mut reclaim_list: Vec<u64> =
+                if let Some(TypedValue::Bytes(json_bytes)) = ctx.get_opt(&reclaim_key)? {
+                    serde_json::from_slice(&json_bytes)
+                        .map_err(|e| anyhow::anyhow!("Failed to parse reclaim list: {}", e))?
+                } else {
+                    Vec::new()
+                };
 
-                // Delete claims and add to reclaim list
-                for (claim_key, event_id) in expired {
-                    ctx.delete(&claim_key)?;
-                    reclaim_list.push(event_id);
-                }
+            // Delete claims and add to reclaim list
+            for (claim_key, event_id) in expired {
+                ctx.delete(&claim_key)?;
+                reclaim_list.push(event_id);
+            }
 
-                // Save updated reclaim list
-                let reclaim_bytes = serde_json::to_vec(&reclaim_list)
-                    .map_err(|e| anyhow::anyhow!("Failed to serialize reclaim list: {}", e))?;
-                ctx.set(&reclaim_key, &TypedValue::Bytes(reclaim_bytes))?;
+            // Save updated reclaim list
+            let reclaim_bytes = serde_json::to_vec(&reclaim_list)
+                .map_err(|e| anyhow::anyhow!("Failed to serialize reclaim list: {}", e))?;
+            ctx.set(&reclaim_key, &TypedValue::Bytes(reclaim_bytes))?;
 
-                Ok(())
-            })?;
+            Ok(())
+        })?;
 
         Ok(count)
     }

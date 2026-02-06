@@ -22,6 +22,7 @@ fn test_no_lost_updates_same_key() {
 
     // Initialize counter to 0
     Transaction::new(&db)
+        .keys(vec![b"counter".to_vec()])
         .execute(|ctx| {
             ctx.set(b"counter", &TypedValue::U64(0))?;
             Ok(())
@@ -45,7 +46,7 @@ fn test_no_lost_updates_same_key() {
                 for _ in 0..increments_per_thread {
                     // Read-modify-write must be atomic
                     Transaction::new(&db)
-                        .write_keys(vec![b"counter".to_vec()])
+                        .keys(vec![b"counter".to_vec()])
                         .execute(|ctx| {
                             let current = match ctx.get(b"counter")? {
                                 TypedValue::U64(v) => v,
@@ -98,6 +99,7 @@ fn test_stripe_lock_serialization() {
 
     // Initialize two accounts
     Transaction::new(&db)
+        .keys(vec![b"account_a".to_vec(), b"account_b".to_vec()])
         .execute(|ctx| {
             ctx.set(b"account_a", &TypedValue::U64(1000))?;
             ctx.set(b"account_b", &TypedValue::U64(1000))?;
@@ -124,13 +126,12 @@ fn test_stripe_lock_serialization() {
                         (b"account_b", b"account_a")
                     };
 
-                    // IMPORTANT: Sort keys to avoid deadlock
-                    let mut keys = vec![from.to_vec(), to.to_vec()];
-                    keys.sort();
+                    // Keys can be in any order - automatic sorting prevents deadlock
+                    let keys = vec![from.to_vec(), to.to_vec()];
 
                     // Transfer must be atomic (both accounts locked)
                     Transaction::new(&db)
-                        .write_keys(keys)
+                        .keys(keys)
                         .validate(|ctx| {
                             let from_balance = match ctx.get(from)? {
                                 TypedValue::U64(v) => v,
@@ -224,6 +225,7 @@ fn test_pause_waits_for_transactions() {
 
     let txn_thread = thread::spawn(move || {
         Transaction::new(&db_clone)
+            .keys(vec![b"test".to_vec()])
             .execute(|ctx| {
                 txn_started_clone.store(true, Ordering::SeqCst);
 
@@ -299,15 +301,16 @@ fn test_lmdb_write_serialization() {
                 barrier.wait();
 
                 let start = std::time::Instant::now();
+                let key = format!("key_{}", thread_id);
 
                 Transaction::new(&db)
+                    .keys(vec![key.as_bytes().to_vec()])
                     .execute(|ctx| {
                         start_times.lock().push((thread_id, start.elapsed()));
 
                         // Simulate some work
                         thread::sleep(Duration::from_millis(10));
 
-                        let key = format!("key_{}", thread_id);
                         ctx.set(key.as_bytes(), &TypedValue::U64(thread_id as u64))?;
 
                         write_order.lock().push(thread_id);
@@ -368,6 +371,7 @@ fn test_concurrent_consistency_stress() {
     for i in 0..num_accounts {
         let key = format!("account_{}", i);
         Transaction::new(&db)
+            .keys(vec![key.as_bytes().to_vec()])
             .execute(|ctx| {
                 ctx.set(key.as_bytes(), &TypedValue::U64(100))?;
                 Ok(())
@@ -401,13 +405,12 @@ fn test_concurrent_consistency_stress() {
                     let key1 = format!("account_{}", acc1);
                     let key2 = format!("account_{}", acc2);
 
-                    // IMPORTANT: Sort keys to avoid deadlock
-                    let mut keys = vec![key1.as_bytes().to_vec(), key2.as_bytes().to_vec()];
-                    keys.sort();
+                    // Keys can be in any order - automatic sorting prevents deadlock
+                    let keys = vec![key1.as_bytes().to_vec(), key2.as_bytes().to_vec()];
 
                     // Transfer 1 from acc1 to acc2
                     let result = Transaction::new(&db)
-                        .write_keys(keys)
+                        .keys(keys)
                         .validate(|ctx| {
                             let balance = match ctx.get(key1.as_bytes())? {
                                 TypedValue::U64(v) => v,

@@ -125,6 +125,14 @@ pub struct CanonicalConfig {
     /// concurrent read access without blocking writes.
     #[serde(default)]
     pub read_pool: ReadPoolConfig,
+
+    /// Lock acquisition timeout in milliseconds (default: 5000)
+    ///
+    /// When acquiring stripe locks for transaction preflight, if a lock
+    /// cannot be acquired within this timeout, the transaction fails with
+    /// `LockTimeout` error instead of blocking indefinitely.
+    #[serde(default = "default_lock_timeout")]
+    pub lock_timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -166,6 +174,10 @@ fn default_preflight_cache_ttl() -> u64 {
     60
 }
 
+fn default_lock_timeout() -> u64 {
+    5000
+}
+
 impl CanonicalConfig {
     pub fn new(path: PathBuf) -> Self {
         Self {
@@ -180,6 +192,7 @@ impl CanonicalConfig {
             preflight_cache_size: default_preflight_cache_size(),
             preflight_cache_ttl_secs: default_preflight_cache_ttl(),
             read_pool: ReadPoolConfig::default(),
+            lock_timeout_ms: default_lock_timeout(),
         }
     }
 
@@ -222,6 +235,15 @@ impl CanonicalConfig {
     /// Enable read pooling with the specified pool size
     pub fn with_read_pool_size(mut self, pool_size: usize) -> Self {
         self.read_pool = ReadPoolConfig::enabled(pool_size);
+        self
+    }
+
+    /// Set lock acquisition timeout in milliseconds
+    ///
+    /// This controls how long to wait when acquiring stripe locks for
+    /// transaction preflight. Default is 5000ms.
+    pub fn with_lock_timeout(mut self, timeout_ms: u64) -> Self {
+        self.lock_timeout_ms = timeout_ms;
         self
     }
 }

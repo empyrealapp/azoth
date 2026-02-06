@@ -44,7 +44,7 @@ fn bench_non_conflicting_transactions(c: &mut Criterion) {
                                 thread::spawn(move || {
                                     let key = format!("account_{}", i);
                                     Transaction::new(&db)
-                                        .write_keys(vec![key.as_bytes().to_vec()])
+                                        .keys(vec![key.as_bytes().to_vec()])
                                         .execute(|ctx| {
                                             ctx.set(
                                                 key.as_bytes(),
@@ -86,7 +86,7 @@ fn bench_single_transaction_latency(c: &mut Criterion) {
         .bench_function("with_preflight", |b| {
             b.iter(|| {
                 Transaction::new(&db)
-                    .write_keys(vec![b"key".to_vec()])
+                    .keys(vec![b"key".to_vec()])
                     .validate(|ctx| {
                         let _val = ctx.get(b"key")?;
                         Ok(())
@@ -150,7 +150,7 @@ fn bench_read_heavy_workload(c: &mut Criterion) {
                 for i in 0..100 {
                     let key = format!("key_{}", i);
                     Transaction::new(&db)
-                        .read_keys(vec![key.as_bytes().to_vec()])
+                        .keys(vec![key.as_bytes().to_vec()])
                         .validate(|ctx| {
                             let _val = ctx.get(key.as_bytes())?;
                             Ok(())
