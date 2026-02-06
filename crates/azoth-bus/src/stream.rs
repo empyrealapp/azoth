@@ -7,6 +7,9 @@ use futures::Stream;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+/// Type alias for the pending event future to reduce type complexity
+type PendingEventFuture = Pin<Box<dyn std::future::Future<Output = Result<Option<Event>>> + Send>>;
+
 /// A stream wrapper for a Consumer that yields events
 ///
 /// This provides an ergonomic way to consume events using async/await:
@@ -27,8 +30,7 @@ use std::task::{Context, Poll};
 pub struct ConsumerStream {
     consumer: Consumer,
     #[pin]
-    pending_future:
-        Option<Pin<Box<dyn std::future::Future<Output = Result<Option<Event>>> + Send>>>,
+    pending_future: Option<PendingEventFuture>,
 }
 
 impl ConsumerStream {

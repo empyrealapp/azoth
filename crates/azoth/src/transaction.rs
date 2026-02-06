@@ -146,8 +146,11 @@ pub struct AsyncTransaction {
     db: Arc<AzothDb>,
     read_keys: Vec<Vec<u8>>,
     write_keys: Vec<Vec<u8>>,
-    validators: Vec<Box<dyn FnOnce(&PreflightContext) -> Result<()> + Send + 'static>>,
+    validators: Vec<PreflightValidator>,
 }
+
+/// Type alias for preflight validator functions to reduce type complexity
+type PreflightValidator = Box<dyn FnOnce(&PreflightContext) -> Result<()> + Send + 'static>;
 
 impl AsyncTransaction {
     /// Create a new async-safe transaction builder
@@ -243,10 +246,6 @@ impl AsyncTransaction {
         .map_err(|e| AzothError::Internal(format!("Transaction task failed: {}", e)))?
     }
 }
-
-/// Type alias for backwards compatibility
-#[deprecated(since = "0.2.0", note = "Use AsyncTransaction instead")]
-pub type OwnedTransaction = AsyncTransaction;
 
 /// Preflight context for validation
 ///
