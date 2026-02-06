@@ -96,7 +96,6 @@ pub use migration::{
     FileMigration, Migration, MigrationHistoryEntry, MigrationInfo, MigrationManager,
 };
 pub use transaction::{
-    execute_transaction_async, AsyncTransaction, OwnedTransaction, PreflightContext, Transaction,
-    TransactionContext,
+    execute_transaction_async, AsyncTransaction, PreflightContext, Transaction, TransactionContext,
 };
 pub use typed_values::{Array, Set, TypedValue, I256, U256};
