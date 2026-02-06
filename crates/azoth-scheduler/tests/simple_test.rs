@@ -29,6 +29,7 @@ fn setup() -> (Arc<AzothDb>, Arc<Connection>, TempDir, TempDir) {
     let db_dir = tempfile::tempdir().unwrap();
 
     let db = Arc::new(AzothDb::open(data_dir.path()).unwrap());
+    #[allow(clippy::arc_with_non_send_sync)]
     let conn = Arc::new(Connection::open(db_dir.path().join("projection.db")).unwrap());
 
     (db, conn, data_dir, db_dir)

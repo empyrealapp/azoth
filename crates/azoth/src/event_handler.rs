@@ -231,64 +231,66 @@ impl EventHandlerRegistry {
     where
         I: IntoIterator<Item = (EventId, &'a [u8])>,
     {
-        // Group events by type
-        let mut event_groups: HashMap<String, Vec<BatchEvent>> = HashMap::new();
+        // Preserve global event order by batching only contiguous runs
+        // of the same event type.
+        let mut current_type: Option<String> = None;
+        let mut current_batch: Vec<BatchEvent> = Vec::new();
+        let mut current_handler: Option<&dyn EventHandler> = None;
         let mut last_flush = Instant::now();
         let mut total_processed = 0;
 
+        let flush_batch = |handler: &dyn EventHandler,
+                           batch: &mut Vec<BatchEvent>,
+                           total: &mut usize|
+         -> Result<()> {
+            if batch.is_empty() {
+                return Ok(());
+            }
+            handler.handle_batch(conn, batch)?;
+            *total += batch.len();
+            batch.clear();
+            Ok(())
+        };
+
         for (event_id, event_bytes) in events {
-            // Parse event type
             let event_str = std::str::from_utf8(event_bytes)
                 .map_err(|e| AzothError::EventDecode(format!("Invalid UTF-8: {}", e)))?;
-
             let (event_type, payload) = event_str.split_once(':').ok_or_else(|| {
                 AzothError::EventDecode("Event must be in format 'type:payload'".into())
             })?;
 
-            // Add to appropriate group
-            let batch = event_groups.entry(event_type.to_string()).or_default();
+            let should_rotate = current_type.as_deref() != Some(event_type)
+                || current_batch.len() >= self.batch_config.max_batch_size
+                || last_flush.elapsed() >= self.batch_config.max_batch_duration;
 
-            batch.push(BatchEvent {
+            if should_rotate {
+                if let Some(handler) = current_handler {
+                    flush_batch(handler, &mut current_batch, &mut total_processed)?;
+                }
+
+                current_handler = Some(self.get(event_type).ok_or_else(|| {
+                    AzothError::EventDecode(format!("No handler for event type '{}'", event_type))
+                })?);
+                current_type = Some(event_type.to_string());
+                last_flush = Instant::now();
+            }
+
+            current_batch.push(BatchEvent {
                 event_id,
                 payload: payload.as_bytes().to_vec(),
             });
-
-            // Check if we should flush any batches
-            let should_flush_size = batch.len() >= self.batch_config.max_batch_size;
-            let should_flush_time = last_flush.elapsed() >= self.batch_config.max_batch_duration;
-
-            if should_flush_size || should_flush_time {
-                // Flush all batches that have reached their limits
-                for (event_type, events) in event_groups.iter_mut() {
-                    if !events.is_empty()
-                        && (events.len() >= self.batch_config.max_batch_size || should_flush_time)
-                    {
-                        let handler = self.get(event_type).ok_or_else(|| {
-                            AzothError::EventDecode(format!(
-                                "No handler for event type '{}'",
-                                event_type
-                            ))
-                        })?;
-
-                        handler.handle_batch(conn, events)?;
-                        total_processed += events.len();
-                        events.clear();
-                    }
+            if current_batch.len() >= self.batch_config.max_batch_size
+                || last_flush.elapsed() >= self.batch_config.max_batch_duration
+            {
+                if let Some(handler) = current_handler {
+                    flush_batch(handler, &mut current_batch, &mut total_processed)?;
+                    last_flush = Instant::now();
                 }
-                last_flush = Instant::now();
             }
         }
 
-        // Flush any remaining events
-        for (event_type, events) in event_groups.iter() {
-            if !events.is_empty() {
-                let handler = self.get(event_type).ok_or_else(|| {
-                    AzothError::EventDecode(format!("No handler for event type '{}'", event_type))
-                })?;
-
-                handler.handle_batch(conn, events)?;
-                total_processed += events.len();
-            }
+        if let Some(handler) = current_handler {
+            flush_batch(handler, &mut current_batch, &mut total_processed)?;
         }
 
         Ok(total_processed)

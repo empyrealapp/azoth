@@ -36,7 +36,7 @@ fn test_preflight_cache_hot_keys() -> Result<()> {
 
     // Read the same key multiple times during preflight
     // First read should be a cache miss, subsequent reads should be cache hits
-    for i in 0..100 {
+    for _i in 0..100 {
         Transaction::new(&db)
             .keys(vec![b"balance".to_vec()])
             .preflight(|ctx| {
@@ -121,7 +121,7 @@ fn test_preflight_cache_concurrent() -> Result<()> {
     let mut handles = vec![];
     let barrier = Arc::new(Barrier::new(10));
 
-    for thread_id in 0..10 {
+    for _thread_id in 0..10 {
         let db_clone = Arc::clone(&db);
         let barrier_clone = Arc::clone(&barrier);
 

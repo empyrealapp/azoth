@@ -74,6 +74,7 @@ async fn main() -> Result<()> {
 
     // Setup database and projection
     let db = Arc::new(AzothDb::open("./data/scheduler-example")?);
+    #[allow(clippy::arc_with_non_send_sync)]
     let conn = Arc::new(Connection::open("./data/scheduler-example/projection.db")?);
 
     // Create scheduler

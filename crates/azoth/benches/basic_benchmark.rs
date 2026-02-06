@@ -115,7 +115,7 @@ fn main() {
     let start = Instant::now();
     let mut iter = db.canonical().iter_events(0, None).unwrap();
     let mut count = 0;
-    while let Some(_) = iter.next().unwrap() {
+    while iter.next().unwrap().is_some() {
         count += 1;
     }
     let duration = start.elapsed();

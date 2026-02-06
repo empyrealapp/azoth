@@ -46,14 +46,13 @@
 
 use crate::checkpoint::{CheckpointMetadata, CheckpointStorage};
 use crate::{AzothError, Result};
+use alloy_network::EthereumWallet;
 use alloy_primitives::{Address, FixedBytes};
-use alloy_provider::{Provider, ProviderBuilder, RootProvider};
+use alloy_provider::{Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::{sol, SolCall};
-use alloy_transport_http::Http;
 use async_trait::async_trait;
-use reqwest::Client;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -142,7 +141,6 @@ pub struct OnChainRegistry {
     config: OnChainConfig,
     backup_storage: Box<dyn CheckpointStorage>,
     signer: PrivateKeySigner,
-    provider: RootProvider<Http<Client>>,
 }
 
 impl OnChainRegistry {
@@ -153,19 +151,10 @@ impl OnChainRegistry {
         let signer = PrivateKeySigner::from_str(private_key)
             .map_err(|e| AzothError::Config(format!("Invalid private key: {}", e)))?;
 
-        // Create provider
-        let provider = ProviderBuilder::new().on_http(
-            config
-                .rpc_url
-                .parse()
-                .map_err(|e| AzothError::Config(format!("Invalid RPC URL: {}", e)))?,
-        );
-
         Ok(Self {
             config,
             backup_storage: storage,
             signer,
-            provider,
         })
     }
 
@@ -220,8 +209,18 @@ impl CheckpointStorage for OnChainRegistry {
         tx.chain_id = Some(self.config.chain_id);
 
         // Sign and send transaction
-        let tx_hash = self
-            .provider
+        let wallet = EthereumWallet::from(self.signer.clone());
+        let url = self
+            .config
+            .rpc_url
+            .parse()
+            .map_err(|e| AzothError::Config(format!("Invalid RPC URL: {}", e)))?;
+        let provider = ProviderBuilder::new()
+            .with_recommended_fillers()
+            .wallet(wallet)
+            .on_http(url);
+
+        let tx_hash = provider
             .send_transaction(tx)
             .await
             .map_err(|e| AzothError::Backup(format!("Failed to send transaction: {}", e)))?
@@ -265,8 +264,14 @@ impl CheckpointStorage for OnChainRegistry {
             .to(self.config.contract_address)
             .input(calldata.into());
 
-        let result = self
-            .provider
+        let url = self
+            .config
+            .rpc_url
+            .parse()
+            .map_err(|e| AzothError::Config(format!("Invalid RPC URL: {}", e)))?;
+        let provider = ProviderBuilder::new().on_http(url);
+
+        let result = provider
             .call(&tx)
             .await
             .map_err(|e| AzothError::Backup(format!("Failed to query backup IDs: {}", e)))?;
@@ -291,8 +296,14 @@ impl CheckpointStorage for OnChainRegistry {
                 .to(self.config.contract_address)
                 .input(calldata.into());
 
-            let result = self
-                .provider
+            let url = self
+                .config
+                .rpc_url
+                .parse()
+                .map_err(|e| AzothError::Config(format!("Invalid RPC URL: {}", e)))?;
+            let provider = ProviderBuilder::new().on_http(url);
+
+            let result = provider
                 .call(&tx)
                 .await
                 .map_err(|e| AzothError::Backup(format!("Failed to query backup: {}", e)))?;

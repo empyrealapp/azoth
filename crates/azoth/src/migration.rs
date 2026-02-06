@@ -229,22 +229,40 @@ impl MigrationManager {
             migration.name()
         );
 
-        // Execute the migration SQL
-        {
-            let conn = projection.conn().lock().unwrap();
+        // Run migration, history write, and schema-version bump atomically.
+        let conn = projection.conn().lock().unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE TRANSACTION")
+            .map_err(|e| AzothError::Projection(e.to_string()))?;
+
+        let apply_result: Result<()> = (|| {
             migration.up(&conn)?;
 
-            // Record in migration history
             conn.execute(
                 "INSERT OR REPLACE INTO migration_history (version, name, applied_at)
                  VALUES (?1, ?2, datetime('now'))",
                 rusqlite::params![migration.version(), migration.name()],
             )
             .map_err(|e| AzothError::Projection(e.to_string()))?;
+
+            conn.execute(
+                "UPDATE projection_meta
+                 SET schema_version = ?1, updated_at = datetime('now')
+                 WHERE id = 0",
+                [migration.version() as i64],
+            )
+            .map_err(|e| AzothError::Projection(e.to_string()))?;
+
+            migration.verify(&conn)?;
+            Ok(())
+        })();
+
+        if let Err(e) = apply_result {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(e);
         }
 
-        // Update schema version
-        projection.migrate(migration.version())?;
+        conn.execute_batch("COMMIT")
+            .map_err(|e| AzothError::Projection(e.to_string()))?;
 
         tracing::info!("Migration v{} complete", migration.version());
         Ok(())
@@ -280,14 +298,38 @@ impl MigrationManager {
             migration.name()
         );
 
-        // Execute the down() migration
-        {
-            let conn = projection.conn().lock().unwrap();
+        // Execute rollback and metadata updates atomically.
+        let conn = projection.conn().lock().unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE TRANSACTION")
+            .map_err(|e| AzothError::Projection(e.to_string()))?;
+
+        let rollback_result: Result<()> = (|| {
             migration.down(&conn)?;
+
+            conn.execute(
+                "DELETE FROM migration_history WHERE version = ?1",
+                [current_version as i64],
+            )
+            .map_err(|e| AzothError::Projection(e.to_string()))?;
+
+            conn.execute(
+                "UPDATE projection_meta
+                 SET schema_version = ?1, updated_at = datetime('now')
+                 WHERE id = 0",
+                [(current_version - 1) as i64],
+            )
+            .map_err(|e| AzothError::Projection(e.to_string()))?;
+
+            Ok(())
+        })();
+
+        if let Err(e) = rollback_result {
+            let _ = conn.execute_batch("ROLLBACK");
+            return Err(e);
         }
 
-        // Update schema version
-        projection.migrate(current_version - 1)?;
+        conn.execute_batch("COMMIT")
+            .map_err(|e| AzothError::Projection(e.to_string()))?;
 
         Ok(())
     }
