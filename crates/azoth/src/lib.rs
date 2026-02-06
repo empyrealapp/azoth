@@ -95,5 +95,8 @@ pub use ipfs_storage::IpfsStorage;
 pub use migration::{
     FileMigration, Migration, MigrationHistoryEntry, MigrationInfo, MigrationManager,
 };
-pub use transaction::{PreflightContext, Transaction, TransactionContext};
+pub use transaction::{
+    execute_transaction_async, AsyncTransaction, OwnedTransaction, PreflightContext, Transaction,
+    TransactionContext,
+};
 pub use typed_values::{Array, Set, TypedValue, I256, U256};

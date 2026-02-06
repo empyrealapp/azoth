@@ -126,9 +126,9 @@ async fn test_lmdb_read_pool_concurrent_async() {
     let (db, _temp) = create_test_db_with_read_pool(4);
     let db = Arc::new(db);
 
-    // Write test data
+    // Write test data using execute_blocking (we're in async context)
     Transaction::new(&db)
-        .execute(|ctx| {
+        .execute_blocking(|ctx| {
             for i in 0..10 {
                 let key = format!("async-key-{}", i);
                 ctx.set(key.as_bytes(), &TypedValue::I64(i * 100))?;
@@ -162,9 +162,9 @@ async fn test_lmdb_read_pool_exhaustion_and_recovery() {
     let (db, _temp) = create_test_db_with_read_pool(2);
     let db = Arc::new(db);
 
-    // Write test data
+    // Write test data using execute_blocking (we're in async context)
     Transaction::new(&db)
-        .execute(|ctx| {
+        .execute_blocking(|ctx| {
             ctx.set(b"test-key", &TypedValue::I64(42))?;
             Ok(())
         })
