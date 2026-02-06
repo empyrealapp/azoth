@@ -2,8 +2,9 @@ use crate::{
     config::ConsumerMetadata, consumer::Consumer, consumer_group::ConsumerGroup, error::Result,
     notification::WakeStrategy,
 };
-use azoth::{typed_values::TypedValue, AzothDb};
+use azoth::{typed_values::TypedValue, AsyncTransaction, AzothDb, Transaction};
 use azoth_core::traits::canonical::{CanonicalReadTxn, CanonicalStore};
+use azoth_core::EventId;
 use serde::{Deserialize, Serialize};
 use std::panic;
 use std::sync::Arc;
@@ -230,6 +231,208 @@ impl EventBus {
     pub fn db(&self) -> &Arc<AzothDb> {
         &self.db
     }
+
+    /// Get the wake strategy (useful for manual notifications)
+    pub fn wake_strategy(&self) -> &WakeStrategy {
+        &self.wake_strategy
+    }
+
+    /// Publish an event to a stream and notify waiting consumers
+    ///
+    /// This is the primary method for real-time stream processing. It:
+    /// 1. Atomically commits the event to the log
+    /// 2. Immediately notifies all consumers waiting on this stream
+    ///
+    /// The event type is automatically prefixed with the stream name.
+    /// For example, `bus.publish("orders", "created", &data)` logs an event
+    /// with type `"orders:created"`.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use azoth_bus::EventBus;
+    ///
+    /// let bus = EventBus::with_notifications(db);
+    ///
+    /// // Publish event - consumers wake instantly
+    /// let event_id = bus.publish("orders", "created", &json!({
+    ///     "order_id": "12345",
+    ///     "amount": 99.99
+    /// }))?;
+    /// ```
+    pub fn publish<T: serde::Serialize>(
+        &self,
+        stream: &str,
+        event_type: &str,
+        payload: &T,
+    ) -> Result<EventId> {
+        let full_type = format!("{}:{}", stream, event_type);
+
+        let commit_info = Transaction::new(&self.db).execute(|ctx| {
+            ctx.log(&full_type, payload)?;
+            Ok(())
+        })?;
+
+        // Notify waiting consumers
+        self.wake_strategy.notify_stream(stream);
+
+        // Return the event ID from commit info
+        commit_info
+            .first_event_id
+            .ok_or_else(|| crate::error::BusError::InvalidState("No event ID returned".into()))
+    }
+
+    /// Publish multiple events atomically to a stream
+    ///
+    /// All events are committed in a single transaction, then consumers
+    /// are notified. Returns the range of event IDs (first, last).
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let (first_id, last_id) = bus.publish_batch("orders", &[
+    ///     ("created", json!({"id": 1})),
+    ///     ("created", json!({"id": 2})),
+    ///     ("updated", json!({"id": 1, "status": "paid"})),
+    /// ])?;
+    /// ```
+    pub fn publish_batch<T: serde::Serialize>(
+        &self,
+        stream: &str,
+        events: &[(&str, T)],
+    ) -> Result<(EventId, EventId)> {
+        if events.is_empty() {
+            return Err(crate::error::BusError::InvalidState(
+                "Cannot publish empty batch".into(),
+            ));
+        }
+
+        let prefixed_events: Vec<(String, &T)> = events
+            .iter()
+            .map(|(t, p)| (format!("{}:{}", stream, t), p))
+            .collect();
+
+        // We need to log each event individually since log_many expects owned tuples
+        let commit_info = Transaction::new(&self.db).execute(|ctx| {
+            for (event_type, payload) in &prefixed_events {
+                ctx.log(event_type, payload)?;
+            }
+            Ok(())
+        })?;
+
+        // Notify waiting consumers
+        self.wake_strategy.notify_stream(stream);
+
+        // Return the event ID range from commit info
+        let first = commit_info
+            .first_event_id
+            .ok_or_else(|| crate::error::BusError::InvalidState("No event ID returned".into()))?;
+        let last = commit_info
+            .last_event_id
+            .ok_or_else(|| crate::error::BusError::InvalidState("No event ID returned".into()))?;
+
+        Ok((first, last))
+    }
+
+    /// Publish raw bytes as an event (for advanced use cases)
+    ///
+    /// Unlike `publish()`, this does not format the event type.
+    /// The caller is responsible for the full event format.
+    pub fn publish_raw(&self, stream: &str, event_bytes: &[u8]) -> Result<EventId> {
+        let commit_info = Transaction::new(&self.db).execute(|ctx| {
+            ctx.log_bytes(event_bytes)?;
+            Ok(())
+        })?;
+
+        // Notify waiting consumers
+        self.wake_strategy.notify_stream(stream);
+
+        commit_info
+            .first_event_id
+            .ok_or_else(|| crate::error::BusError::InvalidState("No event ID returned".into()))
+    }
+
+    /// Publish an event asynchronously (safe to call from async context)
+    ///
+    /// This is the async-safe version of `publish()`. It uses `spawn_blocking`
+    /// internally to avoid blocking the Tokio runtime.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Safe to call from async context
+    /// let event_id = bus.publish_async("orders", "created", json!({
+    ///     "order_id": "12345"
+    /// })).await?;
+    /// ```
+    pub async fn publish_async<T: serde::Serialize + Send + 'static>(
+        &self,
+        stream: &str,
+        event_type: &str,
+        payload: T,
+    ) -> Result<EventId> {
+        let full_type = format!("{}:{}", stream, event_type);
+        let stream_name = stream.to_string();
+        let wake_strategy = self.wake_strategy.clone();
+
+        let commit_info = AsyncTransaction::new(self.db.clone())
+            .execute(move |ctx| {
+                ctx.log(&full_type, &payload)?;
+                Ok(())
+            })
+            .await?;
+
+        // Notify waiting consumers
+        wake_strategy.notify_stream(&stream_name);
+
+        // Return the event ID from commit info
+        commit_info
+            .first_event_id
+            .ok_or_else(|| crate::error::BusError::InvalidState("No event ID returned".into()))
+    }
+
+    /// Publish multiple events atomically (async-safe version)
+    ///
+    /// All events are committed in a single transaction, then consumers
+    /// are notified. Returns the range of event IDs (first, last).
+    pub async fn publish_batch_async<T: serde::Serialize + Send + 'static>(
+        &self,
+        stream: &str,
+        events: Vec<(String, T)>,
+    ) -> Result<(EventId, EventId)> {
+        if events.is_empty() {
+            return Err(crate::error::BusError::InvalidState(
+                "Cannot publish empty batch".into(),
+            ));
+        }
+
+        let stream_prefix = stream.to_string();
+        let stream_name = stream.to_string();
+        let wake_strategy = self.wake_strategy.clone();
+
+        let commit_info = AsyncTransaction::new(self.db.clone())
+            .execute(move |ctx| {
+                for (event_type, payload) in events {
+                    let full_type = format!("{}:{}", stream_prefix, event_type);
+                    ctx.log(&full_type, &payload)?;
+                }
+                Ok(())
+            })
+            .await?;
+
+        // Notify waiting consumers
+        wake_strategy.notify_stream(&stream_name);
+
+        // Return the event ID range from commit info
+        let first = commit_info
+            .first_event_id
+            .ok_or_else(|| crate::error::BusError::InvalidState("No event ID returned".into()))?;
+        let last = commit_info
+            .last_event_id
+            .ok_or_else(|| crate::error::BusError::InvalidState("No event ID returned".into()))?;
+
+        Ok((first, last))
+    }
 }
 
 #[cfg(test)]
@@ -340,5 +543,107 @@ mod tests {
 
         assert_eq!(info1.lag, 50);
         assert_eq!(info2.lag, 70);
+    }
+
+    #[test]
+    fn test_publish() {
+        let (db, _temp) = test_db();
+        let bus = EventBus::new(db.clone());
+
+        // Publish using the bus API
+        let event_id = bus
+            .publish("orders", "created", &serde_json::json!({"id": 123}))
+            .unwrap();
+
+        assert_eq!(event_id, 0);
+
+        // Consumer should see the event with prefixed type
+        let mut consumer = bus.subscribe("orders", "c1").unwrap();
+        let event = consumer.next().unwrap().unwrap();
+
+        assert_eq!(event.event_type, "orders:created");
+        assert!(String::from_utf8_lossy(&event.payload).contains("123"));
+    }
+
+    #[test]
+    fn test_publish_batch() {
+        let (db, _temp) = test_db();
+        let bus = EventBus::new(db.clone());
+
+        // Publish batch using the bus API
+        let events = vec![
+            ("created", serde_json::json!({"id": 1})),
+            ("created", serde_json::json!({"id": 2})),
+            ("updated", serde_json::json!({"id": 1, "status": "paid"})),
+        ];
+
+        let (first_id, last_id) = bus.publish_batch("orders", &events).unwrap();
+
+        assert_eq!(first_id, 0);
+        assert_eq!(last_id, 2);
+
+        // Consumer should see all events
+        let mut consumer = bus.subscribe("orders", "c1").unwrap();
+
+        let event1 = consumer.next().unwrap().unwrap();
+        assert_eq!(event1.event_type, "orders:created");
+        consumer.ack(event1.id).unwrap();
+
+        let event2 = consumer.next().unwrap().unwrap();
+        assert_eq!(event2.event_type, "orders:created");
+        consumer.ack(event2.id).unwrap();
+
+        let event3 = consumer.next().unwrap().unwrap();
+        assert_eq!(event3.event_type, "orders:updated");
+        consumer.ack(event3.id).unwrap();
+
+        assert!(consumer.next().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_publish_notifies_consumers() {
+        let (db, _temp) = test_db();
+
+        // Create bus with notifications enabled
+        let bus = EventBus::with_notifications(db.clone());
+
+        // Create consumer first
+        let mut consumer = bus.subscribe("orders", "c1").unwrap();
+
+        // No events initially
+        assert!(consumer.next().unwrap().is_none());
+
+        // Publish an event - this should trigger notification
+        let event_id = bus
+            .publish("orders", "created", &serde_json::json!({"test": true}))
+            .unwrap();
+
+        // Consumer should now see the event
+        let event = consumer.next().unwrap().unwrap();
+        assert_eq!(event.id, event_id);
+        assert_eq!(event.event_type, "orders:created");
+    }
+
+    #[test]
+    fn test_publish_raw() {
+        let (db, _temp) = test_db();
+        let bus = EventBus::new(db.clone());
+
+        // Publish raw bytes
+        let raw_event = b"custom:raw_event:{\"data\":\"test\"}";
+        let event_id = bus.publish_raw("custom", raw_event).unwrap();
+
+        assert_eq!(event_id, 0);
+    }
+
+    #[test]
+    fn test_wake_strategy_getter() {
+        let (db, _temp) = test_db();
+
+        let bus = EventBus::with_notifications(db.clone());
+
+        // Should be able to get wake strategy for manual notifications
+        let wake = bus.wake_strategy();
+        wake.notify_stream("test"); // Should not panic
     }
 }
