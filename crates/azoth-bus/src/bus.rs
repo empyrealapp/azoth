@@ -3,7 +3,7 @@ use crate::{
     notification::WakeStrategy,
 };
 use azoth::{typed_values::TypedValue, AzothDb};
-use azoth_core::traits::canonical::CanonicalStore;
+use azoth_core::traits::canonical::{CanonicalReadTxn, CanonicalStore};
 use serde::{Deserialize, Serialize};
 use std::panic;
 use std::sync::Arc;
@@ -113,7 +113,7 @@ impl EventBus {
 
         // Get cursor (last acked event ID) and last ack timestamp
         let (cursor_opt, last_ack) = {
-            let txn = self.db.canonical().read_only_txn()?;
+            let txn = self.db.canonical().read_txn()?;
 
             // Get cursor (last acked event ID)
             let cursor_opt = match txn.get_state(&cursor_key)? {

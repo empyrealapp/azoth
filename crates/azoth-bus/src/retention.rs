@@ -2,7 +2,7 @@
 
 use crate::error::Result;
 use azoth::AzothDb;
-use azoth_core::traits::canonical::CanonicalStore;
+use azoth_core::traits::canonical::{CanonicalReadTxn, CanonicalStore};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::Duration;
@@ -71,7 +71,7 @@ impl RetentionManager {
     /// Get retention policy for a stream
     pub fn get_retention(&self, stream: &str) -> Result<RetentionPolicy> {
         let key = format!("bus:stream:{}:retention", stream).into_bytes();
-        let txn = self.db.canonical().read_only_txn()?;
+        let txn = self.db.canonical().read_txn()?;
 
         match txn.get_state(&key)? {
             Some(bytes) => {

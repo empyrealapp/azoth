@@ -20,12 +20,12 @@ pub mod lock_manager;
 pub mod traits;
 pub mod types;
 
-pub use config::{CanonicalConfig, ProjectionConfig, ProjectorConfig};
+pub use config::{CanonicalConfig, ProjectionConfig, ProjectorConfig, ReadPoolConfig};
 pub use error::{AzothError, Result};
 pub use event_log::{EventLog, EventLogIterator, EventLogStats};
 pub use lock_manager::LockManager;
 pub use traits::{
-    CanonicalStore, CanonicalTxn, DecodedEvent, EventApplier, EventDecoder, EventIter,
-    PreflightResult, ProjectionStore, ProjectionTxn,
+    CanonicalReadTxn, CanonicalStore, CanonicalTxn, DecodedEvent, EventApplier, EventDecoder,
+    EventIter, PreflightResult, ProjectionStore, ProjectionTxn,
 };
 pub use types::{BackupInfo, BackupManifest, CanonicalMeta, CommitInfo, EventBytes, EventId};

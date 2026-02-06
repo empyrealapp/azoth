@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::filter::{Event, EventFilter, EventFilterTrait};
 use azoth::prelude::anyhow;
 use azoth::{AzothDb, Transaction, TypedValue};
-use azoth_core::traits::canonical::CanonicalStore;
+use azoth_core::traits::canonical::{CanonicalReadTxn, CanonicalStore};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -195,7 +195,7 @@ impl GroupMember {
         let cursor_key = self.group_cursor_key().into_bytes();
 
         // Read current state outside transaction
-        let txn = self.db.canonical().read_only_txn()?;
+        let txn = self.db.canonical().read_txn()?;
 
         // Check reclaim list
         let reclaim_list: Vec<u64> = match txn.get_state(&reclaim_key)? {
