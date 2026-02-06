@@ -28,7 +28,7 @@ fn benchmark_hot_key_reads(db: &AzothDb, iterations: usize) -> std::time::Durati
     let start = Instant::now();
     for i in 0..iterations {
         Transaction::new(db)
-            .read_keys(vec![b"hot_key".to_vec()])
+            .keys(vec![b"hot_key".to_vec()])
             .preflight(|ctx| {
                 let _value = ctx.get(b"hot_key")?;
                 Ok(())
@@ -63,7 +63,7 @@ fn benchmark_mixed_workload(db: &AzothDb, iterations: usize) -> std::time::Durat
         let key = format!("mixed_key_{}", key_idx);
 
         Transaction::new(db)
-            .read_keys(vec![key.as_bytes().to_vec()])
+            .keys(vec![key.as_bytes().to_vec()])
             .preflight(|ctx| {
                 let _value = ctx.get(key.as_bytes())?;
                 Ok(())
@@ -85,7 +85,7 @@ fn benchmark_cold_keys(db: &AzothDb, iterations: usize) -> std::time::Duration {
         let key = format!("unique_key_{}", i);
 
         Transaction::new(db)
-            .read_keys(vec![key.as_bytes().to_vec()])
+            .keys(vec![key.as_bytes().to_vec()])
             .preflight(|ctx| {
                 let _exists = ctx.exists(key.as_bytes())?;
                 Ok(())
@@ -125,7 +125,7 @@ fn benchmark_concurrent_hot_keys(
             let key = format!("thread_key_{}", thread_id);
             for i in 0..iterations_per_thread {
                 Transaction::new(&db_clone)
-                    .read_keys(vec![key.as_bytes().to_vec()])
+                    .keys(vec![key.as_bytes().to_vec()])
                     .preflight(|ctx| {
                         let _value = ctx.get(key.as_bytes())?;
                         Ok(())

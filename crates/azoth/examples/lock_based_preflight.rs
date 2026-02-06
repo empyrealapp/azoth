@@ -50,7 +50,7 @@ fn main() -> Result<()> {
                 // Each transaction operates on a different account
                 Transaction::new(&db)
                     // Declare keys upfront - acquires lock on this stripe
-                    .write_keys(vec![key.as_bytes().to_vec()])
+                    .keys(vec![key.as_bytes().to_vec()])
                     .validate(|ctx| {
                         // Validation with lock held
                         let balance = ctx.get(key.as_bytes())?.as_u256()?;
@@ -104,7 +104,7 @@ fn main() -> Result<()> {
             thread::spawn(move || {
                 // All transactions operate on account_0 (conflicting!)
                 Transaction::new(&db)
-                    .write_keys(vec![b"account_0".to_vec()])
+                    .keys(vec![b"account_0".to_vec()])
                     .validate(|ctx| {
                         let balance = ctx.get(b"account_0")?.as_u256()?;
                         if balance.to_bytes() < U256::from(100u64).to_bytes() {
@@ -154,7 +154,7 @@ fn main() -> Result<()> {
             thread::spawn(move || {
                 // All transactions READ account_0 (read locks allow parallelism!)
                 Transaction::new(&db)
-                    .read_keys(vec![b"account_0".to_vec()])
+                    .keys(vec![b"account_0".to_vec()])
                     .validate(|ctx| {
                         let _balance = ctx.get(b"account_0")?;
                         // Just reading, not writing

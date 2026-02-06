@@ -13,6 +13,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc, Mutex,
 };
+use std::time::Duration;
 
 use crate::keys::meta_keys;
 use crate::preflight_cache::PreflightCache;
@@ -146,7 +147,10 @@ impl CanonicalStore for LmdbCanonicalStore {
             .map_err(|e| AzothError::Transaction(e.to_string()))?;
 
         let env = Arc::new(env);
-        let lock_manager = Arc::new(LockManager::new(cfg.stripe_count));
+        let lock_manager = Arc::new(LockManager::new(
+            cfg.stripe_count,
+            Duration::from_millis(cfg.lock_timeout_ms),
+        ));
 
         // Initialize preflight cache
         let preflight_cache = Arc::new(PreflightCache::new(

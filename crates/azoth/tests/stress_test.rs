@@ -19,6 +19,7 @@ fn test_concurrent_non_conflicting_transactions() {
     for i in 0..100 {
         let key = format!("account_{}", i);
         Transaction::new(&db)
+            .keys(vec![key.as_bytes().to_vec()])
             .execute(|ctx| {
                 ctx.set(key.as_bytes(), &TypedValue::U256(U256::from(1000u64)))?;
                 Ok(())
@@ -37,7 +38,7 @@ fn test_concurrent_non_conflicting_transactions() {
             thread::spawn(move || {
                 let key = format!("account_{}", i);
                 let result = Transaction::new(&db)
-                    .write_keys(vec![key.as_bytes().to_vec()])
+                    .keys(vec![key.as_bytes().to_vec()])
                     .validate(|ctx| {
                         let balance = ctx.get(key.as_bytes())?.as_u256()?;
                         if balance.to_bytes() < U256::from(100u64).to_bytes() {
@@ -90,6 +91,7 @@ fn test_high_contention_same_key() {
 
     // Initialize single account
     Transaction::new(&db)
+        .keys(vec![b"shared".to_vec()])
         .execute(|ctx| {
             ctx.set(b"shared", &TypedValue::U256(U256::from(1000u64)))?;
             Ok(())
@@ -106,7 +108,7 @@ fn test_high_contention_same_key() {
             let success_count = Arc::clone(&success_count);
             thread::spawn(move || {
                 let result = Transaction::new(&db)
-                    .write_keys(vec![b"shared".to_vec()])
+                    .keys(vec![b"shared".to_vec()])
                     .validate(|ctx| {
                         let balance = ctx.get(b"shared")?.as_u256()?;
                         if balance.to_bytes() < U256::from(100u64).to_bytes() {
@@ -208,6 +210,7 @@ fn test_mixed_read_write_workload() {
     for i in 0..10 {
         let key = format!("key_{}", i);
         Transaction::new(&db)
+            .keys(vec![key.as_bytes().to_vec()])
             .execute(|ctx| {
                 ctx.set(key.as_bytes(), &TypedValue::U256(U256::from(100u64)))?;
                 Ok(())
@@ -232,7 +235,7 @@ fn test_mixed_read_write_workload() {
                 if i % 10 < 7 {
                     // Read operation
                     let result = Transaction::new(&db)
-                        .read_keys(vec![key.as_bytes().to_vec()])
+                        .keys(vec![key.as_bytes().to_vec()])
                         .validate(|ctx| {
                             let _balance = ctx.get(key.as_bytes())?;
                             Ok(())
@@ -245,7 +248,7 @@ fn test_mixed_read_write_workload() {
                 } else {
                     // Write operation
                     let result = Transaction::new(&db)
-                        .write_keys(vec![key.as_bytes().to_vec()])
+                        .keys(vec![key.as_bytes().to_vec()])
                         .execute(|ctx| {
                             ctx.set(key.as_bytes(), &TypedValue::U256(U256::from(99u64)))?;
                             Ok(())
@@ -285,6 +288,7 @@ fn test_lock_fairness() {
 
     // Initialize
     Transaction::new(&db)
+        .keys(vec![b"counter".to_vec()])
         .execute(|ctx| {
             ctx.set(b"counter", &TypedValue::U64(0))?;
             Ok(())
@@ -303,7 +307,7 @@ fn test_lock_fairness() {
             thread::spawn(move || {
                 for attempt in 0..10 {
                     let result = Transaction::new(&db)
-                        .write_keys(vec![b"counter".to_vec()])
+                        .keys(vec![b"counter".to_vec()])
                         .execute(|ctx| {
                             // Increment counter
                             let current = match ctx.get_opt(b"counter")? {

@@ -46,7 +46,11 @@ fn test_concurrent_reads_no_deadlock() {
     let db = Arc::new(db);
 
     // Initialize test data
+    let keys: Vec<Vec<u8>> = (0..100)
+        .map(|i| format!("key-{}", i).into_bytes())
+        .collect();
     Transaction::new(&db)
+        .keys(keys)
         .execute(|ctx| {
             for i in 0..100 {
                 ctx.set(format!("key-{}", i).as_bytes(), &TypedValue::I64(i))?;
@@ -134,6 +138,7 @@ fn test_reads_dont_block_writes() {
 
     // Initialize
     Transaction::new(&db)
+        .keys(vec![b"counter".to_vec()])
         .execute(|ctx| {
             ctx.set(b"counter", &TypedValue::I64(0))?;
             Ok(())
@@ -181,6 +186,7 @@ fn test_reads_dont_block_writes() {
         for i in 0..num_writes {
             // Writes should succeed even while readers are active
             Transaction::new(&db_clone)
+                .keys(vec![b"counter".to_vec()])
                 .execute(|ctx| {
                     ctx.set(b"counter", &TypedValue::I64(i as i64))?;
                     Ok(())
@@ -228,6 +234,7 @@ fn test_writes_dont_block_reads() {
 
     // Initialize
     Transaction::new(&db)
+        .keys(vec![b"value".to_vec()])
         .execute(|ctx| {
             ctx.set(b"value", &TypedValue::I64(0))?;
             Ok(())
@@ -271,6 +278,7 @@ fn test_writes_dont_block_reads() {
         let mut counter = 0i64;
         while !stop_clone.load(Ordering::SeqCst) {
             Transaction::new(&db_clone)
+                .keys(vec![b"value".to_vec()])
                 .execute(|ctx| {
                     ctx.set(b"value", &TypedValue::I64(counter))?;
                     Ok(())
@@ -313,7 +321,11 @@ fn test_high_concurrency_stress() {
     let db = Arc::new(db);
 
     // Initialize test data
+    let keys: Vec<Vec<u8>> = (0..50)
+        .map(|i| format!("item-{}", i).into_bytes())
+        .collect();
     Transaction::new(&db)
+        .keys(keys)
         .execute(|ctx| {
             for i in 0..50 {
                 ctx.set(format!("item-{}", i).as_bytes(), &TypedValue::I64(i))?;
@@ -374,10 +386,13 @@ fn test_high_concurrency_stress() {
                 for i in 0..operations_per_thread {
                     let key = format!("writer-{}-{}", thread_id, i);
 
-                    if let Err(e) = Transaction::new(&db).execute(|ctx| {
-                        ctx.set(key.as_bytes(), &TypedValue::I64(i as i64))?;
-                        Ok(())
-                    }) {
+                    if let Err(e) = Transaction::new(&db)
+                        .keys(vec![key.as_bytes().to_vec()])
+                        .execute(|ctx| {
+                            ctx.set(key.as_bytes(), &TypedValue::I64(i as i64))?;
+                            Ok(())
+                        })
+                    {
                         eprintln!("Write error: {}", e);
                         errors.fetch_add(1, Ordering::SeqCst);
                     }
@@ -422,6 +437,7 @@ fn test_read_transaction_snapshot_isolation() {
 
     // Initialize
     Transaction::new(&db)
+        .keys(vec![b"version".to_vec()])
         .execute(|ctx| {
             ctx.set(b"version", &TypedValue::I64(1))?;
             Ok(())
@@ -475,6 +491,7 @@ fn test_read_transaction_snapshot_isolation() {
         // Perform multiple updates
         for v in 2..=5 {
             Transaction::new(&db2)
+                .keys(vec![b"version".to_vec()])
                 .execute(|ctx| {
                     ctx.set(b"version", &TypedValue::I64(v))?;
                     Ok(())
@@ -549,10 +566,12 @@ fn test_old_footgun_would_have_blocked() {
     // that read_txn is truly read-only and doesn't hold the write lock)
     drop(read_txn); // Must drop first in same thread due to LMDB per-thread transaction limits
 
-    let write_result = Transaction::new(&db).execute(|ctx| {
-        ctx.set(b"key", &TypedValue::I64(42))?;
-        Ok(())
-    });
+    let write_result = Transaction::new(&db)
+        .keys(vec![b"key".to_vec()])
+        .execute(|ctx| {
+            ctx.set(b"key", &TypedValue::I64(42))?;
+            Ok(())
+        });
     assert!(write_result.is_ok());
 
     println!("✅ Old footgun behavior has been fixed");
@@ -566,6 +585,7 @@ fn test_long_reads_dont_starve_writers() {
 
     // Initialize
     Transaction::new(&db)
+        .keys(vec![b"data".to_vec()])
         .execute(|ctx| {
             ctx.set(b"data", &TypedValue::I64(0))?;
             Ok(())
@@ -601,6 +621,7 @@ fn test_long_reads_dont_starve_writers() {
 
         for i in 0..20 {
             Transaction::new(&db2)
+                .keys(vec![b"data".to_vec()])
                 .execute(|ctx| {
                     ctx.set(b"data", &TypedValue::I64(i))?;
                     Ok(())
