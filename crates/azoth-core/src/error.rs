@@ -51,6 +51,14 @@ pub enum AzothError {
     #[error("Timeout: {0}")]
     Timeout(String),
 
+    #[error(
+        "Lock acquisition timed out after {timeout_ms}ms (possible deadlock or high contention)"
+    )]
+    LockTimeout { timeout_ms: u64 },
+
+    #[error("Attempted to access undeclared key '{key}' - all keys must be declared via keys() before access")]
+    UndeclaredKeyAccess { key: String },
+
     #[error("Circuit breaker is open, rejecting request")]
     CircuitBreakerOpen,
 

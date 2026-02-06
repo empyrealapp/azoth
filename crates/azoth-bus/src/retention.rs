@@ -59,7 +59,7 @@ impl RetentionManager {
         let policy_bytes = serde_json::to_vec(&policy)?;
 
         azoth::Transaction::new(&self.db)
-            .write_keys(vec![key.clone()])
+            .keys(vec![key.clone()])
             .execute(|ctx| {
                 ctx.set(&key, &azoth::TypedValue::Bytes(policy_bytes))?;
                 Ok(())
