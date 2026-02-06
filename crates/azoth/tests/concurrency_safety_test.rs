@@ -5,6 +5,7 @@
 
 use azoth::prelude::*;
 use azoth::typed_values::TypedValue;
+use azoth::{CanonicalReadTxn, CanonicalStore};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, Ordering},
     Arc, Barrier,
@@ -65,7 +66,7 @@ fn test_no_lost_updates_same_key() {
     }
 
     // Verify final value - read directly from canonical store
-    let txn = db.canonical().read_only_txn().unwrap();
+    let txn = db.canonical().read_txn().unwrap();
     let bytes = txn.get_state(b"counter").unwrap().unwrap();
     let final_value = match TypedValue::from_bytes(&bytes).unwrap() {
         TypedValue::U64(v) => v,
@@ -177,7 +178,7 @@ fn test_stripe_lock_serialization() {
     }
 
     // Verify total balance is conserved (no money created or destroyed)
-    let txn = db.canonical().read_only_txn().unwrap();
+    let txn = db.canonical().read_txn().unwrap();
     let bytes_a = txn.get_state(b"account_a").unwrap().unwrap();
     let bytes_b = txn.get_state(b"account_b").unwrap().unwrap();
     let balance_a = match TypedValue::from_bytes(&bytes_a).unwrap() {
@@ -446,7 +447,7 @@ fn test_concurrent_consistency_stress() {
     }
 
     // Verify total balance is conserved
-    let txn = db.canonical().read_only_txn().unwrap();
+    let txn = db.canonical().read_txn().unwrap();
     let mut total_balance = 0u64;
     for i in 0..num_accounts {
         let key = format!("account_{}", i);

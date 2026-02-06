@@ -19,7 +19,7 @@ serde = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 anyhow = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["time", "sync"] }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }

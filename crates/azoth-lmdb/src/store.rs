@@ -16,6 +16,7 @@ use std::sync::{
 
 use crate::keys::meta_keys;
 use crate::preflight_cache::PreflightCache;
+use crate::read_pool::LmdbReadPool;
 use crate::txn::LmdbWriteTxn;
 
 /// Adapter to convert EventLogIterator to EventIter
@@ -48,6 +49,7 @@ pub struct LmdbCanonicalStore {
     chunk_size: usize,
     txn_counter: Arc<AtomicUsize>,
     preflight_cache: Arc<PreflightCache>,
+    read_pool: Option<Arc<LmdbReadPool>>,
 }
 
 impl LmdbCanonicalStore {
@@ -105,6 +107,7 @@ impl LmdbCanonicalStore {
 
 impl CanonicalStore for LmdbCanonicalStore {
     type Txn<'a> = LmdbWriteTxn<'a>;
+    type ReadTxn<'a> = crate::txn::LmdbReadTxn<'a>;
 
     fn open(cfg: CanonicalConfig) -> Result<Self> {
         // Create directory if it doesn't exist
@@ -201,6 +204,17 @@ impl CanonicalStore for LmdbCanonicalStore {
                 .map_err(|e| AzothError::Transaction(e.to_string()))?;
         }
 
+        // Initialize read pool if enabled
+        let read_pool = if cfg.read_pool.enabled {
+            Some(Arc::new(LmdbReadPool::new(
+                env.clone(),
+                state_db,
+                cfg.read_pool.clone(),
+            )))
+        } else {
+            None
+        };
+
         Ok(Self {
             env,
             state_db,
@@ -213,6 +227,7 @@ impl CanonicalStore for LmdbCanonicalStore {
             chunk_size: cfg.state_iter_chunk_size,
             txn_counter: Arc::new(AtomicUsize::new(0)),
             preflight_cache,
+            read_pool,
         })
     }
 
@@ -221,10 +236,12 @@ impl CanonicalStore for LmdbCanonicalStore {
         Ok(())
     }
 
-    fn read_txn(&self) -> Result<Self::Txn<'_>> {
-        // Read-only transactions are provided via a separate method
-        // on LmdbCanonicalStore to avoid trait type constraints
-        self.write_txn()
+    fn read_txn(&self) -> Result<Self::ReadTxn<'_>> {
+        let txn = self
+            .env
+            .begin_ro_txn()
+            .map_err(|e| AzothError::Transaction(e.to_string()))?;
+        Ok(crate::txn::LmdbReadTxn::new(txn, self.state_db))
     }
 
     fn write_txn(&self) -> Result<Self::Txn<'_>> {
@@ -494,5 +511,17 @@ impl LmdbCanonicalStore {
     /// This allows access to cache statistics and manual cache operations.
     pub fn preflight_cache(&self) -> &Arc<PreflightCache> {
         &self.preflight_cache
+    }
+
+    /// Get reference to the read pool (if enabled)
+    ///
+    /// Returns None if read pooling was not enabled in config.
+    pub fn read_pool(&self) -> Option<&Arc<LmdbReadPool>> {
+        self.read_pool.as_ref()
+    }
+
+    /// Check if read pooling is enabled
+    pub fn has_read_pool(&self) -> bool {
+        self.read_pool.is_some()
     }
 }

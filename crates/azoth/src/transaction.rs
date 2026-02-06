@@ -38,7 +38,8 @@
 //! ```
 
 use crate::{
-    AzothDb, AzothError, CanonicalStore, CanonicalTxn, CommitInfo, EventId, Result, TypedValue,
+    AzothDb, AzothError, CanonicalReadTxn, CanonicalStore, CanonicalTxn, CommitInfo, EventId,
+    Result, TypedValue,
 };
 use azoth_lmdb::preflight_cache::{CachedValue, PreflightCache};
 use std::sync::Arc;
@@ -69,7 +70,7 @@ impl<'a> PreflightContext<'a> {
         }
 
         // Cache miss - read from LMDB
-        let txn = self.db.canonical().read_only_txn()?;
+        let txn = self.db.canonical().read_txn()?;
         match txn.get_state(key)? {
             Some(bytes) => {
                 // Cache the raw bytes
@@ -96,7 +97,7 @@ impl<'a> PreflightContext<'a> {
         }
 
         // Cache miss - read from LMDB
-        let txn = self.db.canonical().read_only_txn()?;
+        let txn = self.db.canonical().read_txn()?;
         match txn.get_state(key)? {
             Some(bytes) => {
                 // Cache the raw bytes
@@ -123,7 +124,7 @@ impl<'a> PreflightContext<'a> {
         }
 
         // Cache miss - read from LMDB
-        let txn = self.db.canonical().read_only_txn()?;
+        let txn = self.db.canonical().read_txn()?;
         match txn.get_state(key)? {
             Some(bytes) => {
                 // Cache the value

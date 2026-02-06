@@ -1,6 +1,65 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// Configuration for read connection pooling
+///
+/// When enabled, maintains a pool of read-only connections/transactions
+/// for concurrent read access without blocking writes.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReadPoolConfig {
+    /// Whether pooling is enabled (default: false, opt-in)
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Number of read connections/slots in the pool (default: 4)
+    ///
+    /// For LMDB: controls concurrent read transaction slots
+    /// For SQLite: controls number of read-only connections
+    #[serde(default = "default_pool_size")]
+    pub pool_size: usize,
+
+    /// Timeout in milliseconds when acquiring a pooled connection (default: 5000)
+    ///
+    /// If no connection is available within this time, an error is returned.
+    #[serde(default = "default_acquire_timeout")]
+    pub acquire_timeout_ms: u64,
+}
+
+impl Default for ReadPoolConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            pool_size: default_pool_size(),
+            acquire_timeout_ms: default_acquire_timeout(),
+        }
+    }
+}
+
+impl ReadPoolConfig {
+    /// Create a new enabled read pool configuration
+    pub fn enabled(pool_size: usize) -> Self {
+        Self {
+            enabled: true,
+            pool_size,
+            acquire_timeout_ms: default_acquire_timeout(),
+        }
+    }
+
+    /// Set the acquire timeout
+    pub fn with_timeout(mut self, timeout_ms: u64) -> Self {
+        self.acquire_timeout_ms = timeout_ms;
+        self
+    }
+}
+
+fn default_pool_size() -> usize {
+    4
+}
+
+fn default_acquire_timeout() -> u64 {
+    5000
+}
+
 /// Configuration for canonical store
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanonicalConfig {
@@ -59,6 +118,13 @@ pub struct CanonicalConfig {
     /// Entries older than this will be evicted on access.
     #[serde(default = "default_preflight_cache_ttl")]
     pub preflight_cache_ttl_secs: u64,
+
+    /// Read pool configuration (optional, disabled by default)
+    ///
+    /// When enabled, maintains a pool of read-only connections for
+    /// concurrent read access without blocking writes.
+    #[serde(default)]
+    pub read_pool: ReadPoolConfig,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -113,6 +179,7 @@ impl CanonicalConfig {
             preflight_cache_enabled: default_true(),
             preflight_cache_size: default_preflight_cache_size(),
             preflight_cache_ttl_secs: default_preflight_cache_ttl(),
+            read_pool: ReadPoolConfig::default(),
         }
     }
 
@@ -143,6 +210,18 @@ impl CanonicalConfig {
 
     pub fn with_preflight_cache_ttl(mut self, ttl_secs: u64) -> Self {
         self.preflight_cache_ttl_secs = ttl_secs;
+        self
+    }
+
+    /// Configure read connection pooling
+    pub fn with_read_pool(mut self, config: ReadPoolConfig) -> Self {
+        self.read_pool = config;
+        self
+    }
+
+    /// Enable read pooling with the specified pool size
+    pub fn with_read_pool_size(mut self, pool_size: usize) -> Self {
+        self.read_pool = ReadPoolConfig::enabled(pool_size);
         self
     }
 }
