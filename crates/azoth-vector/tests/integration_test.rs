@@ -6,13 +6,8 @@
 //!
 //! Download manually: <https://github.com/sqliteai/sqlite-vector/releases>
 
-use azoth_core::error::AzothError;
-use azoth_core::{ProjectionConfig, ProjectionStore};
-use azoth_sqlite::SqliteProjectionStore;
-use azoth_vector::{DistanceMetric, Vector, VectorConfig, VectorExtension, VectorSearch};
+#[cfg(feature = "has-vector-extension")]
 use std::path::PathBuf;
-use std::sync::Arc;
-use tempfile::tempdir;
 
 /// Resolve path to the sqlite-vector extension for loading.
 /// 1. Use SQLITE_VECTOR_EXTENSION_PATH env if set.
@@ -138,6 +133,12 @@ fn find_vector_binary_in_dir(dir: &std::path::Path) -> Option<PathBuf> {
 #[cfg(feature = "has-vector-extension")]
 mod with_extension {
     use super::*;
+    use azoth_core::error::AzothError;
+    use azoth_core::{ProjectionConfig, ProjectionStore};
+    use azoth_sqlite::SqliteProjectionStore;
+    use azoth_vector::{DistanceMetric, Vector, VectorConfig, VectorExtension, VectorSearch};
+    use std::sync::Arc;
+    use tempfile::tempdir;
 
     fn setup_db() -> Arc<SqliteProjectionStore> {
         let dir = tempdir().unwrap();

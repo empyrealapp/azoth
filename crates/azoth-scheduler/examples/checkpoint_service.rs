@@ -128,6 +128,7 @@ async fn main() -> anyhow::Result<()> {
     let shutdown_config = config.clone();
 
     // Create projection database for scheduler
+    #[allow(clippy::arc_with_non_send_sync)]
     let projection_conn = Arc::new(Connection::open("./scheduler.db")?);
 
     // Create scheduler and register handler based on storage backend

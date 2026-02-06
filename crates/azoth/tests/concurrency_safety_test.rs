@@ -336,9 +336,7 @@ fn test_lmdb_write_serialization() {
     println!("   Write order: {:?}", order);
 
     // Verify no overlap in write transactions (they must be serialized)
-    for i in 0..ends.len() - 1 {
-        let (tid1, end1) = ends[i];
-
+    for &(tid1, end1) in ends.iter().take(ends.len().saturating_sub(1)) {
         // Find the next transaction in execution order
         if let Some((tid2, start2)) = starts.iter().find(|(tid, _)| {
             let pos1 = order.iter().position(|&t| t == tid1).unwrap();

@@ -126,6 +126,16 @@ impl SqliteProjectionStore {
         F: FnOnce(&Connection) -> Result<R> + Send + 'static,
         R: Send + 'static,
     {
+        if let Some(pool) = &self.read_pool {
+            let pool = Arc::clone(pool);
+            return tokio::task::spawn_blocking(move || {
+                let conn = pool.acquire_blocking()?;
+                f(conn.connection())
+            })
+            .await
+            .map_err(|e| AzothError::Projection(format!("Query task failed: {}", e)))?;
+        }
+
         let conn = self.read_conn.clone();
         tokio::task::spawn_blocking(move || {
             let conn_guard = conn.lock().unwrap();
@@ -151,6 +161,11 @@ impl SqliteProjectionStore {
     where
         F: FnOnce(&Connection) -> Result<R>,
     {
+        if let Some(pool) = &self.read_pool {
+            let conn = pool.acquire_blocking()?;
+            return f(conn.connection());
+        }
+
         let conn_guard = self.read_conn.lock().unwrap();
         f(&conn_guard)
     }
