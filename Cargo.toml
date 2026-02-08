@@ -14,7 +14,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 authors = ["johnny <johnny@empyrealsdk.com>"]
 license = "MIT"
@@ -82,12 +82,12 @@ proptest = "1.0"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 # Workspace crates
-azoth-core = { version = "0.2.0", path = "crates/azoth-core" }
-azoth-lmdb = { version = "0.2.0", path = "crates/azoth-lmdb" }
-azoth-sqlite = { version = "0.2.0", path = "crates/azoth-sqlite" }
-azoth-file-log = { version = "0.2.0", path = "crates/azoth-file-log" }
-azoth-projector = { version = "0.2.0", path = "crates/azoth-projector" }
-azoth-scheduler = { version = "0.2.0", path = "crates/azoth-scheduler" }
-azoth-vector = { version = "0.2.0", path = "crates/azoth-vector" }
-azoth-bus = { version = "0.2.0", path = "crates/azoth-bus" }
-azoth = { version = "0.2.0", path = "crates/azoth" }
+azoth-core = { version = "0.2.1", path = "crates/azoth-core" }
+azoth-lmdb = { version = "0.2.1", path = "crates/azoth-lmdb" }
+azoth-sqlite = { version = "0.2.1", path = "crates/azoth-sqlite" }
+azoth-file-log = { version = "0.2.1", path = "crates/azoth-file-log" }
+azoth-projector = { version = "0.2.1", path = "crates/azoth-projector" }
+azoth-scheduler = { version = "0.2.1", path = "crates/azoth-scheduler" }
+azoth-vector = { version = "0.2.1", path = "crates/azoth-vector" }
+azoth-bus = { version = "0.2.1", path = "crates/azoth-bus" }
+azoth = { version = "0.2.1", path = "crates/azoth" }
