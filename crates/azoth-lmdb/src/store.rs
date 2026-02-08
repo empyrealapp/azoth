@@ -326,7 +326,11 @@ impl CanonicalStore for LmdbCanonicalStore {
         let next_event_id = self.get_next_event_id(&txn)?;
         // Empty event log: don't seal at all. Writing SEALED_EVENT_ID=0 makes the
         // projector believe event 0 exists and can cause "lag" to stay >0 forever.
-        let sealed_event_id = if next_event_id > 0 { next_event_id - 1 } else { 0 };
+        let sealed_event_id = if next_event_id > 0 {
+            next_event_id - 1
+        } else {
+            0
+        };
         if next_event_id > 0 {
             self.set_meta(
                 &mut txn,

@@ -340,7 +340,11 @@ impl<S: CheckpointStorage> CheckpointManager<S> {
 
         // Restore database
         tracing::info!("Restoring database to {}", target_path.display());
-        AzothDb::restore_with_options(extract_dir.as_path(), target_path, &self.config.backup_options)?;
+        AzothDb::restore_with_options(
+            extract_dir.as_path(),
+            target_path,
+            &self.config.backup_options,
+        )?;
 
         tracing::info!("Checkpoint restored successfully");
         Ok(())
