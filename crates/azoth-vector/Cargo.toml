@@ -1,10 +1,13 @@
 [package]
 name = "azoth-vector"
-version = "0.1.0"
-edition = "2021"
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 description = "Vector similarity search extension for Azoth using sqlite-vector"
-repository = "https://github.com/your-org/azoth"
+repository.workspace = true
+homepage.workspace = true
+documentation.workspace = true
 keywords = ["database", "event-sourcing", "vector", "similarity-search", "embeddings"]
 categories = ["database"]
 
@@ -16,16 +19,16 @@ has-vector-extension = []
 [dependencies]
 azoth-core = { workspace = true }
 azoth-sqlite = { workspace = true }
-rusqlite = { version = "0.31", features = ["load_extension"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "1.0"
-tracing = "0.1"
+rusqlite = { workspace = true, features = ["load_extension"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
-azoth = { path = "../azoth" }
-tempfile = "3.0"
-tokio = { version = "1", features = ["full"] }
+azoth = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
 # For downloading sqlite-vector extension in integration tests (blocking only, no tokio)
 ureq = { version = "2", default-features = false, features = ["native-tls"] }
 zip = "2"
