@@ -259,10 +259,19 @@ impl<S: CheckpointStorage> CheckpointManager<S> {
         self.db
             .backup_with_options(temp_dir.path(), &self.config.backup_options)?;
 
+        // Create a separate directory for the archive so we never tar "into" the directory
+        // we're archiving (which can include the tar file itself and cause runaway growth).
+        let archive_dir = if let Some(ref dir) = self.config.temp_dir {
+            std::fs::create_dir_all(dir)?;
+            tempfile::tempdir_in(dir)?
+        } else {
+            tempfile::tempdir()?
+        };
+
         // Create tar archive
         let timestamp = Utc::now();
         let temp_id = format!("checkpoint-{}", timestamp.format("%Y%m%d-%H%M%S"));
-        let archive_path = temp_dir.path().join(format!("{}.tar", &temp_id));
+        let archive_path = archive_dir.path().join(format!("{}.tar", &temp_id));
 
         // Create archive with all files in backup directory
         self.create_archive(temp_dir.path(), &archive_path)?;
@@ -331,7 +340,11 @@ impl<S: CheckpointStorage> CheckpointManager<S> {
 
         // Restore database
         tracing::info!("Restoring database to {}", target_path.display());
-        AzothDb::restore_from(&extract_dir, &target_path.to_path_buf())?;
+        AzothDb::restore_with_options(
+            extract_dir.as_path(),
+            target_path,
+            &self.config.backup_options,
+        )?;
 
         tracing::info!("Checkpoint restored successfully");
         Ok(())

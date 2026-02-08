@@ -140,8 +140,25 @@ impl AzothDb {
         let backup_dir = dir.as_ref();
         std::fs::create_dir_all(backup_dir)?;
 
+        struct IngestionGuard {
+            canonical: Arc<LmdbCanonicalStore>,
+        }
+        impl Drop for IngestionGuard {
+            fn drop(&mut self) {
+                if let Err(e) = self.canonical.clear_seal() {
+                    tracing::error!("Failed to clear seal after backup: {}", e);
+                }
+                if let Err(e) = self.canonical.resume_ingestion() {
+                    tracing::error!("Failed to resume ingestion after backup: {}", e);
+                }
+            }
+        }
+
         // Pause ingestion
         self.canonical.pause_ingestion()?;
+        let _guard = IngestionGuard {
+            canonical: self.canonical.clone(),
+        };
 
         // Seal
         let sealed_id = self.canonical.seal()?;
@@ -176,9 +193,6 @@ impl AzothDb {
         let manifest_json = serde_json::to_string_pretty(&manifest)
             .map_err(|e| crate::AzothError::Serialization(e.to_string()))?;
         std::fs::write(&manifest_path, manifest_json)?;
-
-        // Resume ingestion
-        self.canonical.resume_ingestion()?;
 
         tracing::info!("Backup complete at {}", backup_dir.display());
         Ok(())
