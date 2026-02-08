@@ -25,7 +25,9 @@ fn read_manifest_from_tar(tar_path: &std::path::Path) -> Result<BackupManifest> 
             return Ok(manifest);
         }
     }
-    Err(AzothError::Restore("manifest.json not found in checkpoint tar".into()))
+    Err(AzothError::Restore(
+        "manifest.json not found in checkpoint tar".into(),
+    ))
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -109,7 +111,10 @@ async fn test_checkpoint_create_restore_with_encryption_and_compression() -> Res
         restored_db.projection().schema_version()?,
         manifest.projection_schema_version
     );
-    assert_eq!(restored_db.projection().get_cursor()?, manifest.projection_cursor);
+    assert_eq!(
+        restored_db.projection().get_cursor()?,
+        manifest.projection_cursor
+    );
     assert_eq!(restored_db.projector().get_lag()?, 0);
 
     if manifest.projection_cursor != u64::MAX {

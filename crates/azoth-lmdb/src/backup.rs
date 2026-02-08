@@ -47,7 +47,11 @@ pub fn backup_to(store: &LmdbCanonicalStore, dir: &Path) -> Result<BackupInfo> {
         // Empty event log: there is nothing to seal, but the state is still consistent.
         (0, _) => 0,
         (_, Some(id)) => id,
-        _ => return Err(AzothError::Backup("Store must be sealed before backup".into())),
+        _ => {
+            return Err(AzothError::Backup(
+                "Store must be sealed before backup".into(),
+            ))
+        }
     };
 
     // Copy LMDB data file
