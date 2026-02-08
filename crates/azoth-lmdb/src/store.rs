@@ -324,17 +324,19 @@ impl CanonicalStore for LmdbCanonicalStore {
             .map_err(|e| AzothError::Transaction(e.to_string()))?;
 
         let next_event_id = self.get_next_event_id(&txn)?;
-        let sealed_event_id = if next_event_id > 0 {
-            next_event_id - 1
+        // Empty event log: don't seal at all. Writing SEALED_EVENT_ID=0 makes the
+        // projector believe event 0 exists and can cause "lag" to stay >0 forever.
+        let sealed_event_id = if next_event_id > 0 { next_event_id - 1 } else { 0 };
+        if next_event_id > 0 {
+            self.set_meta(
+                &mut txn,
+                meta_keys::SEALED_EVENT_ID,
+                &sealed_event_id.to_string(),
+            )?;
         } else {
-            0
-        };
-
-        self.set_meta(
-            &mut txn,
-            meta_keys::SEALED_EVENT_ID,
-            &sealed_event_id.to_string(),
-        )?;
+            // Clear any previous seal, if present.
+            let _ = txn.del(self.meta_db, &meta_keys::SEALED_EVENT_ID, None);
+        }
         self.set_meta(
             &mut txn,
             meta_keys::UPDATED_AT,
@@ -415,6 +417,31 @@ impl CanonicalStore for LmdbCanonicalStore {
 }
 
 impl LmdbCanonicalStore {
+    /// Clear the sealed marker, re-enabling writes.
+    ///
+    /// Sealing is used as a temporary barrier to create deterministic snapshots. Backups should
+    /// clear the seal before resuming ingestion; otherwise the DB becomes permanently read-only.
+    pub fn clear_seal(&self) -> Result<()> {
+        let _guard = self.write_lock.lock().unwrap();
+
+        let mut txn = self
+            .env
+            .begin_rw_txn()
+            .map_err(|e| AzothError::Transaction(e.to_string()))?;
+
+        // Ignore errors (e.g. NotFound).
+        let _ = txn.del(self.meta_db, &meta_keys::SEALED_EVENT_ID, None);
+        let _ = self.set_meta(
+            &mut txn,
+            meta_keys::UPDATED_AT,
+            &chrono::Utc::now().to_rfc3339(),
+        );
+
+        txn.commit()
+            .map_err(|e| AzothError::Transaction(e.to_string()))?;
+        Ok(())
+    }
+
     /// Begin a read-only transaction
     ///
     /// Read-only transactions allow concurrent reads without blocking writes or other reads.
