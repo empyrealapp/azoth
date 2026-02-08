@@ -28,6 +28,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::str::FromStr;
+use std::sync::Arc;
 
 /// Encryption key for backup encryption using age
 ///
@@ -149,8 +150,25 @@ impl AzothDb {
         let backup_dir = dir.as_ref();
         std::fs::create_dir_all(backup_dir)?;
 
+        let canonical = self.canonical().clone();
+        struct IngestionGuard {
+            canonical: Arc<crate::LmdbCanonicalStore>,
+        }
+        impl Drop for IngestionGuard {
+            fn drop(&mut self) {
+                if let Err(e) = self.canonical.clear_seal() {
+                    tracing::error!("Failed to clear seal after backup: {}", e);
+                }
+                if let Err(e) = self.canonical.resume_ingestion() {
+                    tracing::error!("Failed to resume ingestion after backup: {}", e);
+                }
+            }
+        }
+
         // Pause ingestion
-        self.canonical().pause_ingestion()?;
+        canonical.pause_ingestion()?;
+        // Ensure we always resume (even on errors).
+        let _guard = IngestionGuard { canonical };
 
         // Seal
         let sealed_id = self.canonical().seal()?;
@@ -170,18 +188,31 @@ impl AzothDb {
         let projection_path = backup_dir.join("projection.db");
         self.projection().backup_to(&projection_path)?;
 
-        // Apply encryption if enabled
-        if let Some(ref key) = options.encryption {
-            tracing::info!("Encrypting backup...");
-            encrypt_backup(&canonical_dir, key)?;
-            encrypt_file(&projection_path, key)?;
-        }
-
-        // Apply compression if enabled
+        // Compression must run before encryption for the combined case.
+        // Otherwise we delete/mutate source paths and the next stage can't find its inputs.
         if options.compression {
             tracing::info!("Compressing backup...");
             compress_directory(&canonical_dir, options.compression_level)?;
             compress_file(&projection_path, options.compression_level)?;
+        }
+
+        // Apply encryption if enabled.
+        //
+        // - no compression: encrypt files in canonical/ in-place + projection.db -> projection.db.age
+        // - compression: encrypt compressed artifacts:
+        //   - canonical.tar.zst -> canonical.tar.zst.age
+        //   - projection.db.zst -> projection.db.zst.age
+        if let Some(ref key) = options.encryption {
+            tracing::info!("Encrypting backup...");
+            if options.compression {
+                let canonical_archive = canonical_dir.with_extension("tar.zst");
+                let projection_archive = projection_path.with_extension("db.zst");
+                encrypt_file(&canonical_archive, key)?;
+                encrypt_file(&projection_archive, key)?;
+            } else {
+                encrypt_backup(&canonical_dir, key)?;
+                encrypt_file(&projection_path, key)?;
+            }
         }
 
         // Write manifest
@@ -195,33 +226,19 @@ impl AzothDb {
             self.projection().schema_version()?,
         );
 
-        // Add encryption/compression metadata to manifest
-        let mut metadata = std::collections::HashMap::new();
-        metadata.insert("encrypted".to_string(), options.is_encrypted().to_string());
-        metadata.insert("compressed".to_string(), options.compression.to_string());
-        if options.compression {
-            metadata.insert(
-                "compression_level".to_string(),
-                options.compression_level.to_string(),
-            );
-        }
-
         let manifest_path = backup_dir.join("manifest.json");
         let manifest_json = serde_json::to_string_pretty(&manifest)
             .map_err(|e| AzothError::Serialization(e.to_string()))?;
         std::fs::write(&manifest_path, manifest_json)?;
-
-        // Resume ingestion
-        self.canonical().resume_ingestion()?;
 
         tracing::info!("Backup complete at {}", backup_dir.display());
         Ok(())
     }
 
     /// Restore from backup with custom options
-    pub fn restore_with_options<P: AsRef<Path>>(
+    pub fn restore_with_options<P: AsRef<Path>, Q: AsRef<Path>>(
         backup_dir: P,
-        target_path: P,
+        target_path: Q,
         options: &BackupOptions,
     ) -> Result<Self> {
         let backup_dir = backup_dir.as_ref();
@@ -236,18 +253,28 @@ impl AzothDb {
         let canonical_dir = backup_dir.join("canonical");
         let projection_file = backup_dir.join("projection.db");
 
-        // Decompress if needed
+        // Restore must mirror backup ordering.
+        //
+        // - encryption + compression: decrypt *.age -> *.zst, then decompress
+        // - compression only: decompress
+        // - encryption only: decrypt canonical/*.age and projection.db.age
         if options.compression {
-            tracing::info!("Decompressing backup...");
+            if let Some(ref key) = options.encryption {
+                tracing::info!("Decrypting backup artifacts...");
+                let canonical_archive_age = canonical_dir.with_extension("tar.zst.age");
+                let projection_file_age = projection_file.with_extension("db.zst.age");
+                decrypt_file(&canonical_archive_age, key)?;
+                decrypt_file(&projection_file_age, key)?;
+            }
+
+            tracing::info!("Decompressing backup artifacts...");
             decompress_directory(&canonical_dir)?;
             decompress_file(&projection_file)?;
-        }
-
-        // Decrypt if needed
-        if let Some(ref key) = options.encryption {
+        } else if let Some(ref key) = options.encryption {
             tracing::info!("Decrypting backup...");
             decrypt_backup(&canonical_dir, key)?;
-            decrypt_file(&projection_file, key)?;
+            let projection_file_age = projection_file.with_extension("db.age");
+            decrypt_file(&projection_file_age, key)?;
         }
 
         // Restore using standard method
@@ -365,9 +392,14 @@ fn compress_directory(dir: &Path, level: u32) -> Result<()> {
     let encoder = zstd::Encoder::new(archive_file, level as i32)?;
     let mut tar_builder = tar::Builder::new(encoder);
 
-    // Add all files from directory to tar
+    // Add the directory (as a directory) so decompression recreates the original layout.
+    // If we archive with "." as the prefix, extraction would spill files into the parent
+    // directory rather than recreating `dir/`, which breaks restore layout expectations.
+    let dir_name = dir
+        .file_name()
+        .ok_or_else(|| AzothError::Config("Cannot get directory name".to_string()))?;
     tar_builder
-        .append_dir_all(".", dir)
+        .append_dir_all(dir_name, dir)
         .map_err(AzothError::Io)?;
 
     // Finish and flush
