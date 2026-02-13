@@ -181,7 +181,9 @@ impl ReplayPriority {
                             t.len()
                         )));
                     }
-                    if !t.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ' ') {
+                    if !t.chars().all(|c| {
+                        c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ' '
+                    }) {
                         return Err(AzothError::Config(format!(
                             "ByErrorType string '{}' contains disallowed characters. \
                              Only alphanumeric, underscore, dash, dot, and space are permitted.",
@@ -629,9 +631,8 @@ mod tests {
         assert!(priority.order_by_clause().is_ok());
 
         // SQL injection attempt should be rejected
-        let priority = ReplayPriority::ByErrorType(vec![
-            "'; DROP TABLE dead_letter_queue; --".to_string(),
-        ]);
+        let priority =
+            ReplayPriority::ByErrorType(vec!["'; DROP TABLE dead_letter_queue; --".to_string()]);
         assert!(priority.order_by_clause().is_err());
 
         // Empty string should be rejected
