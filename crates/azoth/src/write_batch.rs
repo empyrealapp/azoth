@@ -62,9 +62,7 @@ impl<'a> WriteBatch<'a> {
 
     /// Buffer a key deletion.
     pub fn delete(&mut self, key: &[u8]) -> &mut Self {
-        self.ops.push(BatchOp::Delete {
-            key: key.to_vec(),
-        });
+        self.ops.push(BatchOp::Delete { key: key.to_vec() });
         self
     }
 

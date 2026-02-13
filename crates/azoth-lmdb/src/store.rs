@@ -649,11 +649,7 @@ impl LmdbCanonicalStore {
     ///
     /// Convenience wrapper around [`submit_write`] for the common case of
     /// writing a single key without an event.
-    pub async fn async_put_state(
-        &self,
-        key: &[u8],
-        value: &[u8],
-    ) -> Result<CommitInfo> {
+    pub async fn async_put_state(&self, key: &[u8], value: &[u8]) -> Result<CommitInfo> {
         let key = key.to_vec();
         let value = value.to_vec();
         self.submit_write(move |txn| {

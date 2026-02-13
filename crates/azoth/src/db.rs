@@ -379,11 +379,7 @@ impl AzothDb {
     /// ```
     pub async fn submit_write<F, R>(&self, f: F) -> Result<R>
     where
-        F: for<'a> FnOnce(
-                &mut azoth_lmdb::txn::LmdbWriteTxn<'a>,
-            ) -> Result<R>
-            + Send
-            + 'static,
+        F: for<'a> FnOnce(&mut azoth_lmdb::txn::LmdbWriteTxn<'a>) -> Result<R> + Send + 'static,
         R: Send + 'static,
     {
         self.canonical.submit_write(f).await

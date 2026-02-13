@@ -65,7 +65,9 @@ pub use azoth_core::{
 };
 
 // Re-export implementations
-pub use azoth_lmdb::{LmdbCanonicalStore, LmdbReadPool, LmdbReadTxn, LmdbWriteTxn, PooledLmdbReadTxn};
+pub use azoth_lmdb::{
+    LmdbCanonicalStore, LmdbReadPool, LmdbReadTxn, LmdbWriteTxn, PooledLmdbReadTxn,
+};
 pub use azoth_projector::{Projector, ProjectorStats};
 pub use azoth_sqlite::{PooledSqliteConnection, SqliteProjectionStore, SqliteReadPool};
 
