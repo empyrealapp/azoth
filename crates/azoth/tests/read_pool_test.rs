@@ -342,3 +342,104 @@ async fn test_sqlite_read_pool_query() {
         .unwrap();
     assert_eq!(count, 2);
 }
+
+#[test]
+fn test_projection_read_pool_enabled_by_default() {
+    // AzothDb::open() should create a projection store with a 4-connection
+    // read pool without any explicit configuration.
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = AzothDb::open(temp_dir.path()).unwrap();
+
+    assert!(db.projection().has_read_pool());
+    let pool = db.projection().read_pool().unwrap();
+    assert_eq!(pool.pool_size(), 4);
+}
+
+#[test]
+fn test_projection_read_pool_explicitly_disabled() {
+    // Consumers that relied on disabled pool should still be able
+    // to opt out via config.
+    let temp_dir = tempfile::tempdir().unwrap();
+    let canonical_config = CanonicalConfig::new(temp_dir.path().join("canonical"));
+    let projection_config = ProjectionConfig::new(temp_dir.path().join("projection.db"))
+        .with_read_pool(azoth_core::ReadPoolConfig::default()); // default = disabled
+
+    let db = AzothDb::open_with_config(
+        temp_dir.path().to_path_buf(),
+        canonical_config,
+        projection_config,
+    )
+    .unwrap();
+
+    assert!(!db.projection().has_read_pool());
+    assert!(db.projection().read_pool().is_none());
+}
+
+#[tokio::test]
+async fn test_projection_default_pool_serves_queries() {
+    // Verify that the default projection pool can actually serve
+    // read queries opened via the standard AzothDb::open() path.
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = AzothDb::open(temp_dir.path()).unwrap();
+
+    // Write data through the write connection
+    db.execute(|conn| {
+        conn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)", [])
+            .map_err(|e| azoth_core::error::AzothError::Projection(e.to_string()))?;
+        conn.execute("INSERT INTO items (id, name) VALUES (1, 'alpha')", [])
+            .map_err(|e| azoth_core::error::AzothError::Projection(e.to_string()))?;
+        Ok(())
+    })
+    .unwrap();
+
+    // Read through the pool
+    let pool = db.projection().read_pool().unwrap().clone();
+    let conn = pool.acquire().await.unwrap();
+    let name: String = conn
+        .query_row("SELECT name FROM items WHERE id = 1", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(name, "alpha");
+
+    // Also verify the closure-based query() path uses the read side
+    let name2: String = db
+        .query(|conn| {
+            conn.query_row("SELECT name FROM items WHERE id = 1", [], |row| row.get(0))
+                .map_err(|e| azoth_core::error::AzothError::Projection(e.to_string()))
+        })
+        .unwrap();
+    assert_eq!(name2, "alpha");
+}
+
+#[test]
+fn test_projection_write_conn_separate_from_read() {
+    // projection_write_conn() should return the write connection,
+    // distinct from the read pool path.
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = AzothDb::open(temp_dir.path()).unwrap();
+
+    // Write via write_conn
+    {
+        let conn = db.projection_write_conn();
+        let guard = conn.lock();
+        guard
+            .execute(
+                "CREATE TABLE write_test (id INTEGER PRIMARY KEY, val TEXT)",
+                [],
+            )
+            .unwrap();
+        guard
+            .execute("INSERT INTO write_test (id, val) VALUES (1, 'written')", [])
+            .unwrap();
+    }
+
+    // Read back via the closure API (uses read connection / pool)
+    let val: String = db
+        .query(|conn| {
+            conn.query_row("SELECT val FROM write_test WHERE id = 1", [], |row| {
+                row.get(0)
+            })
+            .map_err(|e| azoth_core::error::AzothError::Projection(e.to_string()))
+        })
+        .unwrap();
+    assert_eq!(val, "written");
+}

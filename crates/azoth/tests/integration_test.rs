@@ -1,6 +1,7 @@
 //! Integration tests for axiom database
 
 use azoth::prelude::*;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 /// Helper to create a test database
@@ -349,4 +350,138 @@ fn test_schema_version() {
     // Migrating to same version is a no-op
     db.projection().migrate(1).unwrap();
     assert_eq!(db.projection().schema_version().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn test_projector_wakes_on_event_notification() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(AzothDb::open(temp_dir.path()).unwrap());
+
+    // Spawn the projector with a very long poll interval (10s).
+    // If notification works, it will wake up far sooner.
+    let db2 = Arc::clone(&db);
+    let projector_handle = tokio::spawn(async move { db2.projector().run_continuous().await });
+
+    // Give the projector task time to start and enter its await
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Write events
+    {
+        let mut txn = db.canonical().write_txn().unwrap();
+        txn.append_event(b"test:event1").unwrap();
+        txn.append_event(b"test:event2").unwrap();
+        txn.commit().unwrap();
+    }
+
+    // The notification should wake the projector almost immediately.
+    // Wait up to 500ms -- if we had to rely on the 10s poll this would time out.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(500);
+    loop {
+        if db.projector().get_lag().unwrap() == 0 {
+            break;
+        }
+        if tokio::time::Instant::now() > deadline {
+            panic!("Projector did not catch up within 500ms -- notification may not be working");
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    assert_eq!(db.projection().get_cursor().unwrap(), 1);
+
+    // Shut down
+    db.projector().shutdown();
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(2), projector_handle).await;
+}
+
+#[test]
+fn test_write_batch_atomic_commit() {
+    let (db, _temp) = create_test_db();
+
+    // Build a batch with multiple puts, a delete, and an event
+    let mut batch = db.write_batch();
+    batch.put(b"wb:key1", b"value1");
+    batch.put(b"wb:key2", b"value2");
+    batch.put(b"wb:key3", b"value3");
+    batch.delete(b"wb:key3"); // delete within same batch
+    batch.append_event(b"batch_write:3_keys");
+
+    assert_eq!(batch.len(), 5);
+
+    let info = batch.commit().unwrap();
+    assert_eq!(info.state_keys_written, 3);
+    assert_eq!(info.state_keys_deleted, 1);
+    assert_eq!(info.events_written, 1);
+
+    // Verify state (scope the read txn so LMDB's single-reader-per-thread slot is freed)
+    {
+        let txn = db.canonical().read_txn().unwrap();
+        assert_eq!(txn.get_state(b"wb:key1").unwrap(), Some(b"value1".to_vec()));
+        assert_eq!(txn.get_state(b"wb:key2").unwrap(), Some(b"value2".to_vec()));
+        assert_eq!(txn.get_state(b"wb:key3").unwrap(), None); // deleted
+    }
+
+    // Verify event
+    let meta = db.canonical().meta().unwrap();
+    assert_eq!(meta.next_event_id, 1);
+}
+
+#[test]
+fn test_write_batch_empty_is_noop() {
+    let (db, _temp) = create_test_db();
+
+    let batch = db.write_batch();
+    assert!(batch.is_empty());
+
+    // Committing an empty batch should succeed with zero-stat info
+    let info = batch.commit().unwrap();
+    assert_eq!(info.events_written, 0);
+    assert_eq!(info.state_keys_written, 0);
+}
+
+#[tokio::test]
+async fn test_write_batch_commit_async() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = AzothDb::open(temp_dir.path()).unwrap();
+
+    let mut batch = db.write_batch();
+    batch.put(b"async:key", b"async_value");
+    batch.append_event(b"async_write:1");
+
+    let info = batch.commit_async().await.unwrap();
+    assert_eq!(info.state_keys_written, 1);
+    assert_eq!(info.events_written, 1);
+
+    // Verify
+    let txn = db.canonical().read_txn().unwrap();
+    assert_eq!(
+        txn.get_state(b"async:key").unwrap(),
+        Some(b"async_value".to_vec())
+    );
+}
+
+#[tokio::test]
+async fn test_submit_write_async() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = AzothDb::open(temp_dir.path()).unwrap();
+
+    // Use submit_write to do a multi-op transaction asynchronously
+    db.submit_write(|txn| {
+        txn.put_state(b"sw:key1", b"val1")?;
+        txn.put_state(b"sw:key2", b"val2")?;
+        txn.append_event(b"submit_write:2")?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+
+    // Verify state was committed (scope the read txn to free the reader slot)
+    {
+        let read = db.canonical().read_txn().unwrap();
+        assert_eq!(read.get_state(b"sw:key1").unwrap(), Some(b"val1".to_vec()));
+        assert_eq!(read.get_state(b"sw:key2").unwrap(), Some(b"val2".to_vec()));
+    }
+
+    // Verify event
+    let meta = db.canonical().meta().unwrap();
+    assert_eq!(meta.next_event_id, 1);
 }

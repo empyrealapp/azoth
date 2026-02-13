@@ -1,8 +1,9 @@
 //! Tests for event handler system
 
 use azoth::prelude::*;
-use azoth::{EventHandler, EventHandlerRegistry};
+use azoth::{EventHandler, EventHandlerRegistry, EventProcessor};
 use rusqlite::Connection;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 fn create_test_db() -> (AzothDb, TempDir) {
@@ -188,4 +189,150 @@ fn test_multiple_handlers() {
         })
         .unwrap();
     assert_eq!(balance, 120); // 100 + 50 - 30
+}
+
+#[test]
+fn test_build_with_projection_opens_connection() {
+    let (db, _temp) = create_test_db();
+    let db = Arc::new(db);
+
+    // build_with_projection should succeed and return a functional processor
+    let mut processor = EventProcessor::builder(db.clone())
+        .with_handler(Box::new(DepositHandler))
+        .build_with_projection()
+        .expect("build_with_projection should succeed");
+
+    // Cursor should start as None (no events processed yet)
+    assert_eq!(processor.cursor(), None);
+
+    // With no events, process_batch returns 0
+    assert_eq!(processor.process_batch().unwrap(), 0);
+}
+
+#[test]
+fn test_build_with_projection_processes_events() {
+    let (db, _temp) = create_test_db();
+    let db = Arc::new(db);
+
+    // Write some events to the canonical log
+    {
+        let mut txn = db.canonical().write_txn().unwrap();
+        txn.append_event(b"deposit:100").unwrap();
+        txn.append_event(b"deposit:50").unwrap();
+        txn.commit().unwrap();
+    }
+
+    // Build processor using the projection shortcut
+    let mut processor = EventProcessor::builder(db.clone())
+        .with_handler(Box::new(DepositHandler))
+        .build_with_projection()
+        .expect("build_with_projection should succeed");
+
+    // Process all pending events
+    let processed = processor.process_batch().unwrap();
+    assert_eq!(processed, 2);
+
+    // Cursor should have advanced past both events (last processed = event 1)
+    assert_eq!(processor.cursor(), Some(1));
+
+    // No lag remaining
+    assert_eq!(processor.lag().unwrap(), 0);
+}
+
+#[test]
+fn test_build_with_projection_with_multiple_handlers() {
+    let (db, _temp) = create_test_db();
+    let db = Arc::new(db);
+
+    // Write deposit and withdraw events
+    {
+        let mut txn = db.canonical().write_txn().unwrap();
+        txn.append_event(b"deposit:200").unwrap();
+        txn.append_event(b"deposit:50").unwrap();
+        txn.append_event(b"withdraw:75").unwrap();
+        txn.commit().unwrap();
+    }
+
+    // Build with multiple handlers
+    let mut processor = EventProcessor::builder(db.clone())
+        .with_handler(Box::new(DepositHandler))
+        .with_handler(Box::new(WithdrawHandler))
+        .build_with_projection()
+        .expect("build_with_projection should succeed");
+
+    let processed = processor.process_batch().unwrap();
+    assert_eq!(processed, 3);
+
+    // Query the projection database to verify handlers wrote correctly.
+    // build_with_projection opens its own connection to the projection DB,
+    // so we open a separate one to read from it.
+    let proj_path = db.projection().db_path().to_path_buf();
+    let verify_conn = Connection::open(&proj_path).unwrap();
+    let balance: i64 = verify_conn
+        .query_row("SELECT balance FROM accounts WHERE id = 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert_eq!(balance, 175); // 200 + 50 - 75
+}
+
+#[test]
+fn test_build_with_projection_blocking_run() {
+    let temp_dir = tempfile::tempdir().unwrap();
+    let db = Arc::new(AzothDb::open(temp_dir.path()).unwrap());
+
+    // Write events
+    {
+        let mut txn = db.canonical().write_txn().unwrap();
+        txn.append_event(b"deposit:500").unwrap();
+        txn.commit().unwrap();
+    }
+
+    // Build inside the dedicated thread because EventProcessor holds
+    // Arc<Connection> which is !Send (rusqlite::Connection is !Sync).
+    let db2 = db.clone();
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel::<()>();
+    let handle = std::thread::spawn(move || {
+        let mut processor = EventProcessor::builder(db2)
+            .with_handler(Box::new(DepositHandler))
+            .build_with_projection()
+            .expect("build_with_projection should succeed");
+
+        let shutdown = processor.shutdown_handle();
+
+        // Signal the main thread that shutdown handle is ready
+        // by simply running; main thread uses the channel to stop us.
+        std::thread::spawn(move || {
+            let _ = shutdown_rx.recv();
+            shutdown.shutdown();
+        });
+
+        processor.run_blocking()
+    });
+
+    // Wait until the processor catches up
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        let proj_path = db.projection().db_path().to_path_buf();
+        let check_conn = Connection::open(&proj_path).unwrap();
+        let result: std::result::Result<i64, _> =
+            check_conn.query_row("SELECT balance FROM accounts WHERE id = 1", [], |row| {
+                row.get(0)
+            });
+        if let Ok(balance) = result {
+            if balance == 500 {
+                break;
+            }
+        }
+        if std::time::Instant::now() > deadline {
+            panic!("EventProcessor did not process events within 2s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    let _ = shutdown_tx.send(());
+    handle
+        .join()
+        .expect("processor thread should not panic")
+        .unwrap();
 }
