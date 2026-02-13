@@ -672,6 +672,49 @@ Single-threaded benchmarks (release mode):
 
 Use batching for maximum throughput.
 
+## Performance Tuning
+
+### Read Pools
+
+Both LMDB and SQLite stores support optional read connection pools.
+Enable them when your workload has significant concurrent read traffic:
+
+```rust
+use azoth_core::config::ReadPoolConfig;
+
+// LMDB read pool (concurrent read transactions)
+let config = CanonicalConfig::new(path)
+    .with_read_pool_size(4); // 4 concurrent read slots
+
+// SQLite read pool (multiple read-only connections)
+let config = ProjectionConfig {
+    read_pool: ReadPoolConfig::enabled(4),
+    ..Default::default()
+};
+```
+
+### Event Processing Batch Sizes
+
+| Batch size | Use case |
+|---|---|
+| `100` (default) | Low-latency, real-time processing |
+| `1,000` | Balanced throughput for steady-state workloads |
+| `10,000+` | Bulk catch-up / replaying large backlogs |
+
+### SyncMode (LMDB Durability)
+
+| Mode | Durability | Performance |
+|---|---|---|
+| `Full` | Survives power loss | Slowest (fsync every commit) |
+| `NoMetaSync` (default) | Survives process crash; may lose 1 txn on power loss | Good balance |
+| `NoSync` | No guarantees beyond process lifetime | Fastest; **test/ephemeral only** |
+
+### File Event Log – `flush_on_append`
+
+By default the file event log flushes after every append. Set `flush_on_append: false`
+in `FileEventLogConfig` to defer flushing to the OS, gaining significant write throughput
+at the cost of losing un-flushed events on a process crash.
+
 ## Getting Help
 
 - Crates.io: https://crates.io/crates/azoth

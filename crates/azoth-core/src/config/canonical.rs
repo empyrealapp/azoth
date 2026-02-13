@@ -145,12 +145,28 @@ pub struct CanonicalConfig {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum SyncMode {
-    /// Full durability (fsync on every commit)
+    /// Full durability – calls `fsync()` on every commit.
+    ///
+    /// Guarantees that committed data survives power loss and OS crashes.
+    /// This is the safest option but has the highest write latency (~2-5x slower
+    /// than `NoMetaSync`).
     Full,
-    /// No metadata sync (faster, usually safe)
+
+    /// Skips syncing the LMDB meta-page on each commit (default).
+    ///
+    /// Data pages are still synced, so committed data is durable against process
+    /// crashes. In the rare event of an OS crash or power failure, the last
+    /// transaction _may_ be lost, but the database will remain consistent.
+    /// This is a good balance of durability and performance for most workloads.
     #[default]
     NoMetaSync,
-    /// No sync at all (fastest, least safe)
+
+    /// Disables `fsync()` entirely – the OS page cache decides when to flush.
+    ///
+    /// **WARNING**: This is the fastest mode but offers no durability guarantees
+    /// beyond normal process lifetime. A power failure or OS crash can lose an
+    /// unbounded number of recent transactions or, in the worst case, corrupt the
+    /// database file. Only use this for ephemeral, reproducible, or test workloads.
     NoSync,
 }
 

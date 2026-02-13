@@ -125,20 +125,31 @@ impl LmdbReadPool {
 
     /// Acquire a pooled read-only transaction (blocking)
     ///
-    /// This is a synchronous version that blocks the current thread.
+    /// This is a synchronous version that blocks the current thread using
+    /// exponential backoff (1ms, 2ms, 4ms, ... capped at 32ms) up to the
+    /// configured `acquire_timeout`.
+    ///
     /// Prefer `acquire()` in async contexts.
     pub fn acquire_blocking(&self) -> Result<PooledLmdbReadTxn<'_>> {
-        let permit = self
-            .semaphore
-            .try_acquire()
-            .or_else(|_| {
-                // If immediate acquire fails, do a blocking wait with timeout
-                std::thread::sleep(Duration::from_millis(1));
-                self.semaphore.try_acquire()
-            })
-            .map_err(|_| {
-                AzothError::Internal("Read pool exhausted - use async acquire for waiting".into())
-            })?;
+        let deadline = std::time::Instant::now() + self.acquire_timeout;
+        let mut backoff_ms = 1u64;
+        const MAX_BACKOFF_MS: u64 = 32;
+
+        let permit = loop {
+            match self.semaphore.try_acquire() {
+                Ok(permit) => break permit,
+                Err(_) => {
+                    if std::time::Instant::now() >= deadline {
+                        return Err(AzothError::Timeout(format!(
+                            "LMDB read pool acquire timeout after {:?}",
+                            self.acquire_timeout
+                        )));
+                    }
+                    std::thread::sleep(Duration::from_millis(backoff_ms));
+                    backoff_ms = (backoff_ms * 2).min(MAX_BACKOFF_MS);
+                }
+            }
+        };
 
         let txn = self
             .env

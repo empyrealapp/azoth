@@ -162,20 +162,44 @@ pub enum ReplayPriority {
 }
 
 impl ReplayPriority {
-    fn order_by_clause(&self) -> String {
+    /// Generate the ORDER BY clause for this priority.
+    ///
+    /// For `ByErrorType`, error type strings are validated against a strict
+    /// allowlist (`[a-zA-Z0-9_ -.]`) to prevent SQL injection via CASE/LIKE expressions.
+    fn order_by_clause(&self) -> Result<String> {
         match self {
-            ReplayPriority::FIFO => "failed_at ASC".to_string(),
-            ReplayPriority::LIFO => "failed_at DESC".to_string(),
-            ReplayPriority::ByRetryCount => "retry_count ASC, failed_at ASC".to_string(),
+            ReplayPriority::FIFO => Ok("failed_at ASC".to_string()),
+            ReplayPriority::LIFO => Ok("failed_at DESC".to_string()),
+            ReplayPriority::ByRetryCount => Ok("retry_count ASC, failed_at ASC".to_string()),
             ReplayPriority::ByErrorType(types) => {
-                // Order by CASE expression matching error types
+                // Validate each error type to prevent SQL injection.
+                // Only alphanumeric, underscore, dash, dot, and space are allowed.
+                for t in types {
+                    if t.is_empty() || t.len() > 128 {
+                        return Err(AzothError::Config(format!(
+                            "ByErrorType string must be 1-128 characters, got length {}",
+                            t.len()
+                        )));
+                    }
+                    if !t.chars().all(|c| {
+                        c.is_alphanumeric() || c == '_' || c == '-' || c == '.' || c == ' '
+                    }) {
+                        return Err(AzothError::Config(format!(
+                            "ByErrorType string '{}' contains disallowed characters. \
+                             Only alphanumeric, underscore, dash, dot, and space are permitted.",
+                            t
+                        )));
+                    }
+                }
+
+                // Safe to interpolate after validation
                 let cases = types
                     .iter()
                     .enumerate()
                     .map(|(i, t)| format!("WHEN error_message LIKE '%{}%' THEN {}", t, i))
                     .collect::<Vec<_>>()
                     .join(" ");
-                format!("CASE {} ELSE 999 END, failed_at ASC", cases)
+                Ok(format!("CASE {} ELSE 999 END, failed_at ASC", cases))
             }
         }
     }
@@ -390,7 +414,7 @@ impl DlqReplayer {
     }
 
     fn get_eligible_events(&self) -> Result<Vec<FailedEvent>> {
-        let order_by = self.config.priority.order_by_clause();
+        let order_by = self.config.priority.order_by_clause()?;
         let min_age_secs = self.config.min_age.as_secs();
 
         let query = format!(
@@ -585,13 +609,35 @@ mod tests {
     #[test]
     fn test_replay_priority_order_by() {
         let priority = ReplayPriority::FIFO;
-        assert_eq!(priority.order_by_clause(), "failed_at ASC");
+        assert_eq!(priority.order_by_clause().unwrap(), "failed_at ASC");
 
         let priority = ReplayPriority::LIFO;
-        assert_eq!(priority.order_by_clause(), "failed_at DESC");
+        assert_eq!(priority.order_by_clause().unwrap(), "failed_at DESC");
 
         let priority = ReplayPriority::ByRetryCount;
-        assert_eq!(priority.order_by_clause(), "retry_count ASC, failed_at ASC");
+        assert_eq!(
+            priority.order_by_clause().unwrap(),
+            "retry_count ASC, failed_at ASC"
+        );
+    }
+
+    #[test]
+    fn test_replay_priority_by_error_type_validation() {
+        // Valid error types should work
+        let priority = ReplayPriority::ByErrorType(vec![
+            "timeout".to_string(),
+            "connection_error".to_string(),
+        ]);
+        assert!(priority.order_by_clause().is_ok());
+
+        // SQL injection attempt should be rejected
+        let priority =
+            ReplayPriority::ByErrorType(vec!["'; DROP TABLE dead_letter_queue; --".to_string()]);
+        assert!(priority.order_by_clause().is_err());
+
+        // Empty string should be rejected
+        let priority = ReplayPriority::ByErrorType(vec!["".to_string()]);
+        assert!(priority.order_by_clause().is_err());
     }
 
     #[test]

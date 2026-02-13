@@ -263,7 +263,7 @@ mod with_extension {
         run_vector_quantize(&store, "embeddings", "vector");
 
         let query = Vector::new(vec![0.9, 0.1, 0.0]);
-        let search = VectorSearch::new(store.clone(), "embeddings", "vector");
+        let search = VectorSearch::new(store.clone(), "embeddings", "vector").unwrap();
         let results = search.knn(&query, 2).await.unwrap();
 
         assert_eq!(results.len(), 2);
@@ -341,7 +341,7 @@ mod with_extension {
         run_vector_quantize(&store, "items", "vector");
 
         let query = Vector::new(vec![0.95, 0.05, 0.0]);
-        let search = VectorSearch::new(store.clone(), "items", "vector");
+        let search = VectorSearch::new(store.clone(), "items", "vector").unwrap();
 
         let results = search
             .knn_filtered(
@@ -412,7 +412,7 @@ mod with_extension {
         run_vector_quantize(&store, "docs", "vector");
 
         let query = Vector::new(vec![0.9, 0.1, 0.0]);
-        let search = VectorSearch::new(store.clone(), "docs", "vector");
+        let search = VectorSearch::new(store.clone(), "docs", "vector").unwrap();
 
         let results = search.threshold(&query, 0.4, 10).await.unwrap();
 

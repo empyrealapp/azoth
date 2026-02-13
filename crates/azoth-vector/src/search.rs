@@ -6,6 +6,44 @@ use azoth_sqlite::SqliteProjectionStore;
 use rusqlite::params;
 use std::sync::Arc;
 
+/// Validate that a SQL identifier (table or column name) is safe.
+///
+/// Only allows `[a-zA-Z_][a-zA-Z0-9_]*` to prevent SQL injection via
+/// identifier manipulation. Returns an error if the identifier is invalid.
+fn validate_sql_identifier(name: &str, kind: &str) -> Result<()> {
+    if name.is_empty() {
+        return Err(azoth_core::error::AzothError::Config(format!(
+            "{} name must not be empty",
+            kind
+        )));
+    }
+    if name.len() > 128 {
+        return Err(azoth_core::error::AzothError::Config(format!(
+            "{} name must be 128 characters or fewer, got {}",
+            kind,
+            name.len()
+        )));
+    }
+    let mut chars = name.chars();
+    let first = chars.next().unwrap(); // safe: name is non-empty
+    if !first.is_ascii_alphabetic() && first != '_' {
+        return Err(azoth_core::error::AzothError::Config(format!(
+            "{} name '{}' must start with a letter or underscore",
+            kind, name
+        )));
+    }
+    for c in chars {
+        if !c.is_ascii_alphanumeric() && c != '_' {
+            return Err(azoth_core::error::AzothError::Config(format!(
+                "{} name '{}' contains invalid character '{}'. \
+                 Only ASCII alphanumeric and underscore are allowed.",
+                kind, name, c
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// Vector search builder
 ///
 /// Provides k-NN search with optional filtering and custom distance metrics.
@@ -20,7 +58,7 @@ use std::sync::Arc;
 /// let db = AzothDb::open("./data")?;
 ///
 /// let query = Vector::new(vec![0.1, 0.2, 0.3]);
-/// let search = VectorSearch::new(db.projection().clone(), "embeddings", "vector")
+/// let search = VectorSearch::new(db.projection().clone(), "embeddings", "vector")?
 ///     .distance_metric(DistanceMetric::Cosine);
 ///
 /// let results = search.knn(&query, 10).await?;
@@ -40,19 +78,28 @@ impl VectorSearch {
     /// # Arguments
     ///
     /// * `projection` - The SQLite projection store
-    /// * `table` - Table name containing the vector column
-    /// * `column` - Vector column name (must be initialized with vector_init)
+    /// * `table` - Table name containing the vector column (must be a valid SQL identifier)
+    /// * `column` - Vector column name (must be a valid SQL identifier, initialized with vector_init)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `table` or `column` contain characters other than
+    /// ASCII alphanumeric and underscore, or don't start with a letter/underscore.
     pub fn new(
         projection: Arc<SqliteProjectionStore>,
         table: impl Into<String>,
         column: impl Into<String>,
-    ) -> Self {
-        Self {
+    ) -> Result<Self> {
+        let table = table.into();
+        let column = column.into();
+        validate_sql_identifier(&table, "Table")?;
+        validate_sql_identifier(&column, "Column")?;
+        Ok(Self {
             projection,
-            table: table.into(),
-            column: column.into(),
+            table,
+            column,
             distance_metric: DistanceMetric::Cosine,
-        }
+        })
     }
 
     /// Set the distance metric
@@ -82,6 +129,7 @@ impl VectorSearch {
     /// # }
     /// ```
     pub async fn knn(&self, query: &Vector, k: usize) -> Result<Vec<SearchResult>> {
+        // Table and column are validated at construction time via validate_sql_identifier
         let table = self.table.clone();
         let column = self.column.clone();
         let query_json = query.to_json();
@@ -91,10 +139,8 @@ impl VectorSearch {
             .query_async(move |conn| {
                 let sql = format!(
                     "SELECT rowid, distance
-                     FROM vector_quantize_scan('{}', '{}', ?, ?)
+                     FROM vector_quantize_scan('{table}', '{column}', ?, ?)
                      ORDER BY distance ASC",
-                    table.replace('\'', "''"),
-                    column.replace('\'', "''")
                 );
 
                 let mut stmt = conn
@@ -149,6 +195,15 @@ impl VectorSearch {
     ///
     /// Allows filtering results by additional columns in the table.
     ///
+    /// # Safety (SQL Injection)
+    ///
+    /// The `filter` string is interpolated into the WHERE clause of the query.
+    /// **Always use `?` placeholders** for values and pass them via `filter_params`.
+    /// Never interpolate user input directly into the filter string.
+    ///
+    /// Table and column identifiers are validated at `VectorSearch::new()` time
+    /// to prevent identifier injection.
+    ///
     /// # Example
     ///
     /// ```no_run
@@ -156,10 +211,15 @@ impl VectorSearch {
     /// # async fn example(search: VectorSearch) -> Result<(), Box<dyn std::error::Error>> {
     /// let query = Vector::new(vec![0.1, 0.2, 0.3]);
     ///
-    /// // Only search within a specific category
+    /// // GOOD: parameterized filter
     /// let results = search
-    ///     .knn_filtered(&query, 10, "category = ?", vec!["tech".to_string()])
+    ///     .knn_filtered(&query, 10, "t.category = ?", vec!["tech".to_string()])
     ///     .await?;
+    ///
+    /// // BAD (DO NOT DO THIS): interpolating user input
+    /// // let results = search
+    /// //     .knn_filtered(&query, 10, &format!("t.category = '{}'", user_input), vec![])
+    /// //     .await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -170,6 +230,7 @@ impl VectorSearch {
         filter: &str,
         filter_params: Vec<String>,
     ) -> Result<Vec<SearchResult>> {
+        // Table and column are validated at construction time via validate_sql_identifier
         let table = self.table.clone();
         let column = self.column.clone();
         let query_json = query.to_json();
@@ -180,14 +241,10 @@ impl VectorSearch {
             .query_async(move |conn| {
                 let sql = format!(
                     "SELECT v.rowid, v.distance
-                     FROM vector_quantize_scan('{}', '{}', ?, ?) AS v
-                     JOIN {} AS t ON v.rowid = t.rowid
-                     WHERE {}
+                     FROM vector_quantize_scan('{table}', '{column}', ?, ?) AS v
+                     JOIN {table} AS t ON v.rowid = t.rowid
+                     WHERE {filter}
                      ORDER BY v.distance ASC",
-                    table.replace('\'', "''"),
-                    column.replace('\'', "''"),
-                    table.replace('\'', "''"),
-                    filter
                 );
 
                 let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> =
@@ -269,8 +326,7 @@ mod tests {
     use super::*;
     use azoth_core::traits::ProjectionStore;
 
-    #[test]
-    fn test_search_builder() {
+    fn make_store() -> Arc<SqliteProjectionStore> {
         use tempfile::tempdir;
         let dir = tempdir().unwrap();
         let db_path = dir.path().join("test.db");
@@ -284,14 +340,50 @@ mod tests {
             read_pool: azoth_core::config::ReadPoolConfig::default(),
         };
 
-        let store = Arc::new(azoth_sqlite::SqliteProjectionStore::open(config).unwrap());
+        // Leak the tempdir so it lives long enough for the test
+        std::mem::forget(dir);
+        Arc::new(azoth_sqlite::SqliteProjectionStore::open(config).unwrap())
+    }
 
-        let search =
-            VectorSearch::new(store.clone(), "test", "vector").distance_metric(DistanceMetric::L2);
+    #[test]
+    fn test_search_builder() {
+        let store = make_store();
+
+        let search = VectorSearch::new(store.clone(), "test", "vector")
+            .unwrap()
+            .distance_metric(DistanceMetric::L2);
 
         assert_eq!(search.table(), "test");
         assert_eq!(search.column(), "vector");
         assert_eq!(search.distance_metric_value(), DistanceMetric::L2);
+    }
+
+    #[test]
+    fn test_identifier_validation_rejects_injection() {
+        let store = make_store();
+
+        // SQL injection in table name should be rejected
+        let result = VectorSearch::new(store.clone(), "x; DROP TABLE y; --", "vector");
+        assert!(result.is_err());
+
+        // SQL injection in column name should be rejected
+        let result = VectorSearch::new(store.clone(), "test", "v'; DROP TABLE y; --");
+        assert!(result.is_err());
+
+        // Empty names should be rejected
+        let result = VectorSearch::new(store.clone(), "", "vector");
+        assert!(result.is_err());
+
+        // Names starting with digits should be rejected
+        let result = VectorSearch::new(store.clone(), "123table", "vector");
+        assert!(result.is_err());
+
+        // Valid identifiers should work
+        let result = VectorSearch::new(store.clone(), "my_table", "embedding_col");
+        assert!(result.is_ok());
+
+        let result = VectorSearch::new(store.clone(), "_private", "_col");
+        assert!(result.is_ok());
     }
 
     // Full integration tests with vector extension in tests/ directory

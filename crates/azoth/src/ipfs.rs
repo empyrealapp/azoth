@@ -34,7 +34,9 @@ use serde::{Deserialize, Serialize};
 use std::path::Path;
 
 /// IPFS provider configuration
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// The `Debug` impl redacts API credentials to prevent accidental exposure in logs.
+#[derive(Clone, Serialize, Deserialize)]
 pub enum IpfsProvider {
     /// Gateway-only provider (read-only)
     Gateway { url: String },
@@ -44,6 +46,20 @@ pub enum IpfsProvider {
         secret_key: String,
         gateway_url: Option<String>,
     },
+}
+
+impl std::fmt::Debug for IpfsProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            IpfsProvider::Gateway { url } => f.debug_struct("Gateway").field("url", url).finish(),
+            IpfsProvider::Pinata { gateway_url, .. } => f
+                .debug_struct("Pinata")
+                .field("api_key", &"[REDACTED]")
+                .field("secret_key", &"[REDACTED]")
+                .field("gateway_url", gateway_url)
+                .finish(),
+        }
+    }
 }
 
 impl IpfsProvider {

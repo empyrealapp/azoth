@@ -91,7 +91,15 @@ impl EventProcessorBuilder {
         self
     }
 
-    /// Set the batch size (how many events to process at once)
+    /// Set the batch size (how many events to process per `process_batch` call).
+    ///
+    /// Larger batches increase throughput by amortizing per-batch overhead, but
+    /// require more memory and increase latency to first processed event.
+    ///
+    /// **Recommended values:**
+    /// - `100` (default) – good starting point for low-latency workloads
+    /// - `1,000` – balanced throughput for steady-state processing
+    /// - `10,000+` – maximum throughput for bulk catch-up (e.g. replaying a large backlog)
     pub fn with_batch_size(mut self, size: usize) -> Self {
         self.batch_size = size;
         self

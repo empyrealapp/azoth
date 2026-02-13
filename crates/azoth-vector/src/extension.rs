@@ -20,8 +20,14 @@ use std::path::Path;
 ///
 /// # Safety
 ///
-/// This function uses unsafe code to load the extension. The extension must be
-/// a valid SQLite extension and should be from a trusted source.
+/// This function uses `unsafe` because `rusqlite::Connection::load_extension`
+/// calls `sqlite3_load_extension`, which loads a native shared library (`.so` / `.dylib` / `.dll`)
+/// into the current process. Loading an untrusted library can execute arbitrary code.
+///
+/// **Requirements for safe usage:**
+/// - The extension binary **must** come from a trusted, verified source (e.g., official releases).
+/// - The `path` argument should **never** be derived from user-supplied input.
+/// - Consider validating file checksums before loading in production deployments.
 pub fn load_vector_extension(conn: &Connection, path: Option<&Path>) -> Result<()> {
     let ext_path = path.unwrap_or_else(|| {
         #[cfg(target_os = "linux")]

@@ -149,6 +149,8 @@ impl ScheduleProjection {
     }
 
     /// List all tasks with optional filtering.
+    ///
+    /// All filter values are passed as bound parameters to prevent SQL injection.
     pub fn list_tasks(&self, filter: &TaskFilter) -> Result<Vec<ScheduledTask>> {
         let mut query = String::from(
             r#"
@@ -160,19 +162,24 @@ impl ScheduleProjection {
             "#,
         );
 
+        // Collect bound parameters to prevent SQL injection
+        let mut bound_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
         if let Some(enabled) = filter.enabled {
-            query.push_str(&format!(" AND enabled = {}", if enabled { 1 } else { 0 }));
+            query.push_str(" AND enabled = ?");
+            bound_params.push(Box::new(if enabled { 1_i32 } else { 0_i32 }));
         }
 
         if let Some(task_type) = &filter.task_type {
-            query.push_str(&format!(" AND task_type = '{}'", task_type));
+            query.push_str(" AND task_type = ?");
+            bound_params.push(Box::new(task_type.clone()));
         }
 
         query.push_str(" ORDER BY created_at DESC");
 
         let mut stmt = self.conn.prepare(&query)?;
         let tasks = stmt
-            .query_map([], |row| {
+            .query_map(rusqlite::params_from_iter(bound_params.iter()), |row| {
                 Ok(ScheduledTask {
                     task_id: row.get(0)?,
                     task_type: row.get(1)?,
