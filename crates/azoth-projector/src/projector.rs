@@ -118,7 +118,7 @@ where
 
     /// Run the projector continuously until shutdown.
     ///
-    /// When an `event_notify` handle is set (via [`with_event_notify`]),
+    /// When an `event_notify` handle is set (via [`Self::with_event_notify`]),
     /// the projector awaits the notification instead of polling, giving
     /// near-zero-latency projection with zero CPU waste when idle.
     /// Falls back to `poll_interval_ms` sleep if no notifier is present.

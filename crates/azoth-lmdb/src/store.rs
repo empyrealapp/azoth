@@ -647,7 +647,7 @@ impl LmdbCanonicalStore {
 
     /// Put a single key-value pair asynchronously and commit.
     ///
-    /// Convenience wrapper around [`submit_write`] for the common case of
+    /// Convenience wrapper around [`Self::submit_write`] for the common case of
     /// writing a single key without an event.
     pub async fn async_put_state(&self, key: &[u8], value: &[u8]) -> Result<CommitInfo> {
         let key = key.to_vec();
@@ -669,7 +669,7 @@ impl LmdbCanonicalStore {
 
     /// Delete a single key asynchronously and commit.
     ///
-    /// Convenience wrapper around [`submit_write`].
+    /// Convenience wrapper around [`Self::submit_write`].
     pub async fn async_del_state(&self, key: &[u8]) -> Result<CommitInfo> {
         let key = key.to_vec();
         self.submit_write(move |txn| {
