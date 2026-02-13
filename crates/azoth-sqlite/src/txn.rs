@@ -3,8 +3,8 @@ use azoth_core::{
     traits::ProjectionTxn,
     types::EventId,
 };
+use parking_lot::MutexGuard;
 use rusqlite::Connection;
-use std::sync::MutexGuard;
 
 // Projection transaction that works with Connection directly
 pub struct SimpleProjectionTxn<'a> {

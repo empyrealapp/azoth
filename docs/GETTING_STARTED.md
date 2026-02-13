@@ -283,7 +283,7 @@ println!("Restored to EventId: {}", cursor);
 ### Direct SQL Access
 
 ```rust
-let conn = db.projection().conn().lock().unwrap();
+let conn = db.projection().conn().lock();
 
 let balance: i64 = conn.query_row(
     "SELECT balance FROM accounts WHERE id = ?1",
@@ -297,7 +297,7 @@ println!("Account balance: {}", balance);
 ### Custom Queries
 
 ```rust
-let conn = db.projection().conn().lock().unwrap();
+let conn = db.projection().conn().lock();
 
 let mut stmt = conn.prepare(
     "SELECT id, balance FROM accounts WHERE balance > ?1"
@@ -494,7 +494,7 @@ fn test_end_to_end() {
     db.projector().run_once().unwrap();
 
     // Verify SQL
-    let conn = db.projection().conn().lock().unwrap();
+    let conn = db.projection().conn().lock();
     let balance: i64 = conn.query_row(
         "SELECT balance FROM accounts WHERE id = 1",
         [],

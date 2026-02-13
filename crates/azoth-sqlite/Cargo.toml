@@ -20,6 +20,7 @@ tracing = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true, features = ["time", "sync"] }
+parking_lot = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

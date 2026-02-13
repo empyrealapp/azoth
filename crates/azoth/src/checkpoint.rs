@@ -92,6 +92,46 @@ impl LocalStorage {
     pub fn new(base_path: PathBuf) -> Self {
         Self { base_path }
     }
+
+    /// Resolve `id` to a path under `base_path`, rejecting path-traversal attempts.
+    ///
+    /// Only allows filenames that consist of ASCII alphanumeric characters,
+    /// hyphens, underscores, and periods. Rejects any id containing path
+    /// separators (`/`, `\`, `..`) or other special characters.
+    fn safe_path(&self, id: &str) -> Result<PathBuf> {
+        // Reject empty ids
+        if id.is_empty() {
+            return Err(AzothError::Config(
+                "Checkpoint id must not be empty".to_string(),
+            ));
+        }
+
+        // Whitelist: only safe filename characters
+        let is_safe = id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
+
+        if !is_safe || id.contains("..") {
+            return Err(AzothError::Config(format!(
+                "Checkpoint id '{}' contains unsafe characters. \
+                 Only alphanumeric, hyphen, underscore, and period are allowed.",
+                id
+            )));
+        }
+
+        let resolved = self.base_path.join(id);
+
+        // Defence-in-depth: verify the resolved path is still under base_path
+        // even after the whitelist check above.
+        if resolved.parent() != Some(&self.base_path) {
+            return Err(AzothError::Config(format!(
+                "Checkpoint id '{}' resolves outside the storage directory",
+                id
+            )));
+        }
+
+        Ok(resolved)
+    }
 }
 
 #[async_trait]
@@ -104,12 +144,15 @@ impl CheckpointStorage for LocalStorage {
             metadata.timestamp.format("%Y%m%d-%H%M%S"),
             &metadata.id
         );
-        let dest_path = self.base_path.join(&filename);
+
+        // Validate that the generated filename is safe before writing
+        let dest_path = self.safe_path(&filename)?;
 
         std::fs::copy(path, &dest_path)?;
 
         // Also save metadata
-        let metadata_path = self.base_path.join(format!("{}.json", &filename));
+        let metadata_filename = format!("{}.json", &filename);
+        let metadata_path = self.safe_path(&metadata_filename)?;
         let metadata_json = serde_json::to_string_pretty(metadata)
             .map_err(|e| AzothError::Serialization(e.to_string()))?;
         std::fs::write(metadata_path, metadata_json)?;
@@ -118,7 +161,7 @@ impl CheckpointStorage for LocalStorage {
     }
 
     async fn download(&self, id: &str, path: &Path) -> Result<()> {
-        let src_path = self.base_path.join(id);
+        let src_path = self.safe_path(id)?;
         if !src_path.exists() {
             return Err(AzothError::NotFound(format!(
                 "Checkpoint not found: {}",
@@ -131,8 +174,9 @@ impl CheckpointStorage for LocalStorage {
     }
 
     async fn delete(&self, id: &str) -> Result<()> {
-        let checkpoint_path = self.base_path.join(id);
-        let metadata_path = self.base_path.join(format!("{}.json", id));
+        let checkpoint_path = self.safe_path(id)?;
+        let metadata_filename = format!("{}.json", id);
+        let metadata_path = self.safe_path(&metadata_filename)?;
 
         if checkpoint_path.exists() {
             std::fs::remove_file(&checkpoint_path)?;

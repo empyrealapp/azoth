@@ -97,5 +97,6 @@ pub use migration::{
 };
 pub use transaction::{
     execute_transaction_async, AsyncTransaction, PreflightContext, Transaction, TransactionContext,
+    MAX_DECLARED_KEYS,
 };
 pub use typed_values::{Array, Set, TypedValue, I256, U256};

@@ -4,9 +4,10 @@ use azoth_core::{
     types::EventId,
     ProjectionConfig,
 };
+use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use crate::read_pool::SqliteReadPool;
 use crate::schema;
@@ -138,7 +139,7 @@ impl SqliteProjectionStore {
 
         let conn = self.read_conn.clone();
         tokio::task::spawn_blocking(move || {
-            let conn_guard = conn.lock().unwrap();
+            let conn_guard = conn.lock();
             f(&conn_guard)
         })
         .await
@@ -166,7 +167,7 @@ impl SqliteProjectionStore {
             return f(conn.connection());
         }
 
-        let conn_guard = self.read_conn.lock().unwrap();
+        let conn_guard = self.read_conn.lock();
         f(&conn_guard)
     }
 
@@ -189,7 +190,7 @@ impl SqliteProjectionStore {
     {
         let conn = self.write_conn.clone();
         tokio::task::spawn_blocking(move || {
-            let conn_guard = conn.lock().unwrap();
+            let conn_guard = conn.lock();
             f(&conn_guard)
         })
         .await
@@ -211,7 +212,7 @@ impl SqliteProjectionStore {
     where
         F: FnOnce(&Connection) -> Result<()>,
     {
-        let conn_guard = self.write_conn.lock().unwrap();
+        let conn_guard = self.write_conn.lock();
         f(&conn_guard)
     }
 
@@ -233,7 +234,7 @@ impl SqliteProjectionStore {
     where
         F: FnOnce(&rusqlite::Transaction) -> Result<()>,
     {
-        let mut conn_guard = self.write_conn.lock().unwrap();
+        let mut conn_guard = self.write_conn.lock();
         let tx = conn_guard
             .transaction()
             .map_err(|e| AzothError::Projection(e.to_string()))?;
@@ -254,7 +255,7 @@ impl SqliteProjectionStore {
     {
         let conn = self.write_conn.clone();
         tokio::task::spawn_blocking(move || {
-            let mut conn_guard = conn.lock().unwrap();
+            let mut conn_guard = conn.lock();
             let tx = conn_guard
                 .transaction()
                 .map_err(|e| AzothError::Projection(e.to_string()))?;
@@ -337,13 +338,13 @@ impl ProjectionStore for SqliteProjectionStore {
 
     fn begin_txn(&self) -> Result<Self::Txn<'_>> {
         // Begin exclusive transaction using SimpleProjectionTxn (uses write connection)
-        let guard = self.write_conn.lock().unwrap();
+        let guard = self.write_conn.lock();
         SimpleProjectionTxn::new(guard)
     }
 
     fn get_cursor(&self) -> Result<EventId> {
         // Use read connection for this read-only operation
-        let conn = self.read_conn.lock().unwrap();
+        let conn = self.read_conn.lock();
         let cursor: i64 = conn
             .query_row(
                 "SELECT last_applied_event_id FROM projection_meta WHERE id = 0",
@@ -356,14 +357,14 @@ impl ProjectionStore for SqliteProjectionStore {
     }
 
     fn migrate(&self, target_version: u32) -> Result<()> {
-        let conn = self.write_conn.lock().unwrap();
+        let conn = self.write_conn.lock();
         schema::migrate(&conn, target_version)
     }
 
     fn backup_to(&self, path: &Path) -> Result<()> {
         // Checkpoint WAL to flush all changes to the main database file
         {
-            let conn = self.write_conn.lock().unwrap();
+            let conn = self.write_conn.lock();
             // Execute checkpoint with full iteration of results
             let mut stmt = conn
                 .prepare("PRAGMA wal_checkpoint(RESTART)")
@@ -394,7 +395,7 @@ impl ProjectionStore for SqliteProjectionStore {
 
     fn schema_version(&self) -> Result<u32> {
         // Use read connection for this read-only operation
-        let conn = self.read_conn.lock().unwrap();
+        let conn = self.read_conn.lock();
         let version: i64 = conn
             .query_row(
                 "SELECT schema_version FROM projection_meta WHERE id = 0",

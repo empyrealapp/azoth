@@ -10,7 +10,7 @@ use std::sync::Arc;
 ///
 /// Only allows `[a-zA-Z_][a-zA-Z0-9_]*` to prevent SQL injection via
 /// identifier manipulation. Returns an error if the identifier is invalid.
-fn validate_sql_identifier(name: &str, kind: &str) -> Result<()> {
+pub(crate) fn validate_sql_identifier(name: &str, kind: &str) -> Result<()> {
     if name.is_empty() {
         return Err(azoth_core::error::AzothError::Config(format!(
             "{} name must not be empty",
@@ -42,6 +42,191 @@ fn validate_sql_identifier(name: &str, kind: &str) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// A bound parameter value for SQL queries.
+///
+/// Used internally by [`VectorFilter`] to hold typed values that are bound
+/// via parameterized queries, preventing SQL injection.
+#[derive(Clone, Debug)]
+pub enum FilterValue {
+    /// String parameter
+    String(String),
+    /// 64-bit integer parameter
+    I64(i64),
+    /// 64-bit float parameter
+    F64(f64),
+}
+
+impl FilterValue {
+    /// Convert into a boxed `ToSql` trait object for rusqlite parameter binding.
+    pub fn to_boxed_sql(self) -> Box<dyn rusqlite::ToSql> {
+        match self {
+            Self::String(s) => Box::new(s),
+            Self::I64(i) => Box::new(i),
+            Self::F64(f) => Box::new(f),
+        }
+    }
+}
+
+/// A single condition in a vector search filter.
+#[derive(Clone, Debug)]
+struct FilterCondition {
+    /// SQL fragment, e.g. `t.category = ?` or `t.in_stock = ?`
+    sql: String,
+    /// Bound parameter values (one per `?` placeholder in `sql`)
+    params: Vec<FilterValue>,
+}
+
+/// Type-safe filter builder for vector search queries.
+///
+/// All column names are validated as safe SQL identifiers and all values are
+/// bound via parameterized queries, eliminating SQL injection by construction.
+///
+/// # Example
+///
+/// ```
+/// use azoth_vector::VectorFilter;
+///
+/// let filter = VectorFilter::new()
+///     .eq("category", "electronics")
+///     .eq_i64("in_stock", 1)
+///     .gt("price", "9.99");
+///
+/// let (sql, params) = filter.to_sql().unwrap();
+/// assert_eq!(sql, "t.category = ? AND t.in_stock = ? AND t.price > ?");
+/// assert_eq!(params.len(), 3);
+/// ```
+#[derive(Clone, Debug, Default)]
+pub struct VectorFilter {
+    conditions: Vec<FilterCondition>,
+}
+
+impl VectorFilter {
+    /// Create an empty filter (matches all rows).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a string equality condition: `t.<column> = ?`
+    pub fn eq(self, column: &str, value: impl Into<String>) -> Self {
+        self.add_op(column, "=", FilterValue::String(value.into()))
+    }
+
+    /// Add a string inequality condition: `t.<column> != ?`
+    pub fn neq(self, column: &str, value: impl Into<String>) -> Self {
+        self.add_op(column, "!=", FilterValue::String(value.into()))
+    }
+
+    /// Add a string greater-than condition: `t.<column> > ?`
+    pub fn gt(self, column: &str, value: impl Into<String>) -> Self {
+        self.add_op(column, ">", FilterValue::String(value.into()))
+    }
+
+    /// Add a string greater-or-equal condition: `t.<column> >= ?`
+    pub fn gte(self, column: &str, value: impl Into<String>) -> Self {
+        self.add_op(column, ">=", FilterValue::String(value.into()))
+    }
+
+    /// Add a string less-than condition: `t.<column> < ?`
+    pub fn lt(self, column: &str, value: impl Into<String>) -> Self {
+        self.add_op(column, "<", FilterValue::String(value.into()))
+    }
+
+    /// Add a string less-or-equal condition: `t.<column> <= ?`
+    pub fn lte(self, column: &str, value: impl Into<String>) -> Self {
+        self.add_op(column, "<=", FilterValue::String(value.into()))
+    }
+
+    /// Add a LIKE condition: `t.<column> LIKE ?`
+    pub fn like(self, column: &str, pattern: impl Into<String>) -> Self {
+        self.add_op(column, "LIKE", FilterValue::String(pattern.into()))
+    }
+
+    /// Add an integer equality condition: `t.<column> = ?`
+    pub fn eq_i64(self, column: &str, value: i64) -> Self {
+        self.add_op(column, "=", FilterValue::I64(value))
+    }
+
+    /// Add an integer greater-than condition: `t.<column> > ?`
+    pub fn gt_i64(self, column: &str, value: i64) -> Self {
+        self.add_op(column, ">", FilterValue::I64(value))
+    }
+
+    /// Add an integer greater-or-equal condition: `t.<column> >= ?`
+    pub fn gte_i64(self, column: &str, value: i64) -> Self {
+        self.add_op(column, ">=", FilterValue::I64(value))
+    }
+
+    /// Add an integer less-than condition: `t.<column> < ?`
+    pub fn lt_i64(self, column: &str, value: i64) -> Self {
+        self.add_op(column, "<", FilterValue::I64(value))
+    }
+
+    /// Add an integer less-or-equal condition: `t.<column> <= ?`
+    pub fn lte_i64(self, column: &str, value: i64) -> Self {
+        self.add_op(column, "<=", FilterValue::I64(value))
+    }
+
+    /// Add a float equality condition: `t.<column> = ?`
+    pub fn eq_f64(self, column: &str, value: f64) -> Self {
+        self.add_op(column, "=", FilterValue::F64(value))
+    }
+
+    /// Add a float greater-than condition: `t.<column> > ?`
+    pub fn gt_f64(self, column: &str, value: f64) -> Self {
+        self.add_op(column, ">", FilterValue::F64(value))
+    }
+
+    /// Add a float less-than condition: `t.<column> < ?`
+    pub fn lt_f64(self, column: &str, value: f64) -> Self {
+        self.add_op(column, "<", FilterValue::F64(value))
+    }
+
+    /// Internal helper: validate column and push a condition.
+    fn add_op(mut self, column: &str, op: &str, value: FilterValue) -> Self {
+        self.conditions.push(FilterCondition {
+            // We store validated column + op; validation happens in to_sql()
+            sql: format!("t.{column} {op} ?"),
+            params: vec![value],
+        });
+        self
+    }
+
+    /// Emit the WHERE clause and its bound parameters.
+    ///
+    /// Returns `("1 = 1", [])` for an empty filter (matches all rows).
+    ///
+    /// # Errors
+    ///
+    /// Returns `AzothError::Config` if any column name fails identifier validation.
+    pub fn to_sql(&self) -> Result<(String, Vec<FilterValue>)> {
+        if self.conditions.is_empty() {
+            return Ok(("1 = 1".to_string(), Vec::new()));
+        }
+
+        // Validate all column names before emitting SQL
+        for cond in &self.conditions {
+            // Extract column name from `t.<col> <op> ?`
+            let col_name = cond
+                .sql
+                .strip_prefix("t.")
+                .and_then(|rest| rest.split_whitespace().next())
+                .unwrap_or("");
+            validate_sql_identifier(col_name, "Filter column")?;
+        }
+
+        let sql_parts: Vec<&str> = self.conditions.iter().map(|c| c.sql.as_str()).collect();
+        let sql = sql_parts.join(" AND ");
+
+        let params: Vec<FilterValue> = self
+            .conditions
+            .iter()
+            .flat_map(|c| c.params.clone())
+            .collect();
+
+        Ok((sql, params))
+    }
 }
 
 /// Vector search builder
@@ -191,35 +376,25 @@ impl VectorSearch {
             .collect())
     }
 
-    /// Search with custom SQL filter
+    /// Search with structured filter conditions
     ///
-    /// Allows filtering results by additional columns in the table.
-    ///
-    /// # Safety (SQL Injection)
-    ///
-    /// The `filter` string is interpolated into the WHERE clause of the query.
-    /// **Always use `?` placeholders** for values and pass them via `filter_params`.
-    /// Never interpolate user input directly into the filter string.
-    ///
-    /// Table and column identifiers are validated at `VectorSearch::new()` time
-    /// to prevent identifier injection.
+    /// Allows filtering results by additional columns in the table using a
+    /// type-safe [`VectorFilter`] builder. All column names are validated as
+    /// safe SQL identifiers, and all values are bound via parameterized queries,
+    /// preventing SQL injection by construction.
     ///
     /// # Example
     ///
     /// ```no_run
-    /// # use azoth_vector::{VectorSearch, Vector};
+    /// # use azoth_vector::{VectorSearch, Vector, VectorFilter};
     /// # async fn example(search: VectorSearch) -> Result<(), Box<dyn std::error::Error>> {
     /// let query = Vector::new(vec![0.1, 0.2, 0.3]);
     ///
-    /// // GOOD: parameterized filter
-    /// let results = search
-    ///     .knn_filtered(&query, 10, "t.category = ?", vec!["tech".to_string()])
-    ///     .await?;
+    /// let filter = VectorFilter::new()
+    ///     .eq("category", "tech")
+    ///     .eq_i64("in_stock", 1);
     ///
-    /// // BAD (DO NOT DO THIS): interpolating user input
-    /// // let results = search
-    /// //     .knn_filtered(&query, 10, &format!("t.category = '{}'", user_input), vec![])
-    /// //     .await?;
+    /// let results = search.knn_filtered(&query, 10, &filter).await?;
     /// # Ok(())
     /// # }
     /// ```
@@ -227,15 +402,14 @@ impl VectorSearch {
         &self,
         query: &Vector,
         k: usize,
-        filter: &str,
-        filter_params: Vec<String>,
+        filter: &VectorFilter,
     ) -> Result<Vec<SearchResult>> {
-        // Table and column are validated at construction time via validate_sql_identifier
+        let (where_clause, filter_params) = filter.to_sql()?;
+
         let table = self.table.clone();
         let column = self.column.clone();
         let query_json = query.to_json();
         let k_i64 = k as i64;
-        let filter = filter.to_string();
 
         self.projection
             .query_async(move |conn| {
@@ -243,14 +417,14 @@ impl VectorSearch {
                     "SELECT v.rowid, v.distance
                      FROM vector_quantize_scan('{table}', '{column}', ?, ?) AS v
                      JOIN {table} AS t ON v.rowid = t.rowid
-                     WHERE {filter}
+                     WHERE {where_clause}
                      ORDER BY v.distance ASC",
                 );
 
                 let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> =
                     vec![Box::new(query_json), Box::new(k_i64)];
                 for p in filter_params {
-                    params_vec.push(Box::new(p));
+                    params_vec.push(p.to_boxed_sql());
                 }
 
                 let mut stmt = conn

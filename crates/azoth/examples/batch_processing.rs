@@ -62,7 +62,7 @@ fn main() -> Result<()> {
     // Setup projection schema
     println!("1. Setting up projection schema...");
     let conn = db.projection().conn();
-    let locked_conn = conn.lock().unwrap();
+    let locked_conn = conn.lock();
     locked_conn
         .execute(
             "CREATE TABLE IF NOT EXISTS accounts (
@@ -110,7 +110,7 @@ fn main() -> Result<()> {
     // Process events in batches
     println!("\n4. Processing events in batches...");
     let start = Instant::now();
-    let locked_conn = db.projection().conn().lock().unwrap();
+    let locked_conn = db.projection().conn().lock();
     let processed = registry.process_batched(
         &locked_conn,
         events.iter().map(|(id, data)| (*id, data.as_slice())),

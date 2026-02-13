@@ -1,5 +1,6 @@
 //! Extension loading and initialization
 
+use crate::search::validate_sql_identifier;
 use crate::types::VectorConfig;
 use azoth_core::{error::AzothError, Result};
 use rusqlite::Connection;
@@ -48,6 +49,10 @@ pub fn load_vector_extension(conn: &Connection, path: Option<&Path>) -> Result<(
         }
     });
 
+    // Reject paths that contain path-traversal components to prevent loading
+    // arbitrary libraries from unexpected locations.
+    validate_extension_path(ext_path)?;
+
     unsafe {
         let _guard = rusqlite::LoadExtensionGuard::new(conn)
             .map_err(|e| AzothError::Projection(format!("Failed to enable extensions: {}", e)))?;
@@ -62,6 +67,40 @@ pub fn load_vector_extension(conn: &Connection, path: Option<&Path>) -> Result<(
     }
 
     tracing::info!("Loaded sqlite-vector extension successfully");
+    Ok(())
+}
+
+/// Validate that an extension path does not contain path-traversal components
+/// or point through symlinks.
+///
+/// Rejects paths containing `..` components and paths that are symlinks,
+/// as these could be used to load arbitrary shared libraries.
+fn validate_extension_path(path: &Path) -> Result<()> {
+    // Reject ".." components anywhere in the path
+    for component in path.components() {
+        if let std::path::Component::ParentDir = component {
+            return Err(AzothError::Config(format!(
+                "Extension path '{}' contains '..' component. \
+                 Path traversal is not allowed for extension loading.",
+                path.display()
+            )));
+        }
+    }
+
+    // If the file exists, reject symlinks
+    if path.exists()
+        && path
+            .symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+    {
+        return Err(AzothError::Config(format!(
+            "Extension path '{}' is a symbolic link. \
+             Symlinks are not allowed for extension loading.",
+            path.display()
+        )));
+    }
+
     Ok(())
 }
 
@@ -135,20 +174,20 @@ pub trait VectorExtension {
 
 impl VectorExtension for azoth_sqlite::SqliteProjectionStore {
     fn load_vector_extension(&self, path: Option<&Path>) -> Result<()> {
-        let conn = self.conn().lock().unwrap();
+        let conn = self.conn().lock();
         load_vector_extension(&conn, path)
     }
 
     fn vector_init(&self, table: &str, column: &str, config: VectorConfig) -> Result<()> {
-        let conn = self.conn().lock().unwrap();
+        // Validate identifiers to prevent SQL injection (same check used in VectorSearch::new)
+        validate_sql_identifier(table, "Table")?;
+        validate_sql_identifier(column, "Column")?;
+
+        let conn = self.conn().lock();
         let config_str = config.to_config_string();
 
         conn.query_row(
-            &format!(
-                "SELECT vector_init('{}', '{}', ?)",
-                table.replace('\'', "''"),
-                column.replace('\'', "''")
-            ),
+            &format!("SELECT vector_init('{table}', '{column}', ?)"),
             [&config_str],
             |_row| Ok(()),
         )
@@ -169,13 +208,13 @@ impl VectorExtension for azoth_sqlite::SqliteProjectionStore {
     }
 
     fn has_vector_support(&self) -> bool {
-        let conn = self.conn().lock().unwrap();
+        let conn = self.conn().lock();
         let result = conn.prepare("SELECT vector_version()");
         result.is_ok()
     }
 
     fn vector_version(&self) -> Result<String> {
-        let conn = self.conn().lock().unwrap();
+        let conn = self.conn().lock();
         let version: String = conn
             .query_row("SELECT vector_version()", [], |row| row.get(0))
             .map_err(|e| AzothError::Projection(format!("Failed to get vector version: {}", e)))?;

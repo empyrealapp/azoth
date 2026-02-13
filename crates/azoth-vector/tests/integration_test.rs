@@ -136,7 +136,9 @@ mod with_extension {
     use azoth_core::error::AzothError;
     use azoth_core::{ProjectionConfig, ProjectionStore};
     use azoth_sqlite::SqliteProjectionStore;
-    use azoth_vector::{DistanceMetric, Vector, VectorConfig, VectorExtension, VectorSearch};
+    use azoth_vector::{
+        DistanceMetric, Vector, VectorConfig, VectorExtension, VectorFilter, VectorSearch,
+    };
     use std::sync::Arc;
     use tempfile::tempdir;
 
@@ -343,15 +345,11 @@ mod with_extension {
         let query = Vector::new(vec![0.95, 0.05, 0.0]);
         let search = VectorSearch::new(store.clone(), "items", "vector").unwrap();
 
-        let results = search
-            .knn_filtered(
-                &query,
-                10,
-                "category = ? AND in_stock = 1",
-                vec!["electronics".to_string()],
-            )
-            .await
-            .unwrap();
+        let filter = VectorFilter::new()
+            .eq("category", "electronics")
+            .eq_i64("in_stock", 1);
+
+        let results = search.knn_filtered(&query, 10, &filter).await.unwrap();
 
         assert_eq!(results.len(), 2);
         let rowids: std::collections::HashSet<_> = results.iter().map(|r| r.rowid).collect();

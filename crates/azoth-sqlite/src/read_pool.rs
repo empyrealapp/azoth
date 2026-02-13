@@ -7,10 +7,10 @@ use azoth_core::{
     error::{AzothError, Result},
     ReadPoolConfig,
 };
+use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::sync::{Semaphore, SemaphorePermit};
 
@@ -19,7 +19,7 @@ use tokio::sync::{Semaphore, SemaphorePermit};
 /// This wraps a SQLite read-only connection with automatic permit release
 /// when the connection is returned to the pool.
 pub struct PooledSqliteConnection<'a> {
-    conn: std::sync::MutexGuard<'a, Connection>,
+    conn: parking_lot::MutexGuard<'a, Connection>,
     _permit: SemaphorePermit<'a>,
 }
 
@@ -128,7 +128,7 @@ impl SqliteReadPool {
         let start = self.next_idx.fetch_add(1, Ordering::Relaxed) % self.connections.len();
         for i in 0..self.connections.len() {
             let idx = (start + i) % self.connections.len();
-            if let Ok(guard) = self.connections[idx].try_lock() {
+            if let Some(guard) = self.connections[idx].try_lock() {
                 return Ok(PooledSqliteConnection {
                     conn: guard,
                     _permit: permit,
@@ -152,7 +152,7 @@ impl SqliteReadPool {
                 let start = self.next_idx.fetch_add(1, Ordering::Relaxed) % self.connections.len();
                 for i in 0..self.connections.len() {
                     let idx = (start + i) % self.connections.len();
-                    if let Ok(guard) = self.connections[idx].try_lock() {
+                    if let Some(guard) = self.connections[idx].try_lock() {
                         return Ok(Some(PooledSqliteConnection {
                             conn: guard,
                             _permit: permit,

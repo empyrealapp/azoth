@@ -3,13 +3,14 @@ use azoth_core::{
     event_log::{EventLog, EventLogIterator, EventLogStats},
     types::EventId,
 };
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{
     atomic::{AtomicU64, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 
 /// Configuration for file-based event log
@@ -128,7 +129,7 @@ impl FileEventLog {
 
     /// Save metadata to disk
     fn save_meta(&self) -> Result<()> {
-        let meta = self.meta.lock().unwrap();
+        let meta = self.meta.lock();
         let meta_path = self.config.base_dir.join("meta.json");
         // Use compact serialization (not pretty) for better performance
         let data = serde_json::to_string(&*meta)
@@ -156,7 +157,7 @@ impl FileEventLog {
             )));
         }
 
-        let mut writer = self.writer.lock().unwrap();
+        let mut writer = self.writer.lock();
 
         // Write event_id (8 bytes, big-endian)
         writer.write_all(&event_id.to_be_bytes())?;
@@ -191,7 +192,7 @@ impl FileEventLog {
     fn rotate_internal(&self) -> Result<Option<PathBuf>> {
         // Flush current writer
         {
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock();
             writer.flush()?;
         }
 
@@ -204,7 +205,7 @@ impl FileEventLog {
 
         // Update metadata
         {
-            let mut meta = self.meta.lock().unwrap();
+            let mut meta = self.meta.lock();
             meta.current_file_num = new_file_num;
         }
         self.save_meta()?;
@@ -218,7 +219,7 @@ impl FileEventLog {
 
         // Replace writer
         {
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock();
             *writer = BufWriter::with_capacity(self.config.write_buffer_size, file);
         }
 
@@ -239,13 +240,13 @@ impl EventLog for FileEventLog {
 
         // Conditionally flush based on config
         if self.config.flush_on_append {
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock();
             writer.flush()?;
         }
 
         // Update metadata
         {
-            let mut meta = self.meta.lock().unwrap();
+            let mut meta = self.meta.lock();
             meta.next_event_id = event_id + 1;
             meta.total_events += 1;
         }
@@ -321,20 +322,20 @@ impl EventLog for FileEventLog {
             }
 
             // Single lock acquisition + single write syscall
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock();
             writer.write_all(&buffer)?;
         }
 
         // Conditionally flush based on config
         if self.config.flush_on_append {
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock();
             writer.flush()?;
         }
 
         // Update metadata
         let last_id = first_event_id + events.len() as u64 - 1;
         {
-            let mut meta = self.meta.lock().unwrap();
+            let mut meta = self.meta.lock();
             meta.next_event_id = last_id + 1;
             meta.total_events += events.len() as u64;
         }
@@ -359,11 +360,11 @@ impl EventLog for FileEventLog {
     ) -> Result<Box<dyn EventLogIterator>> {
         // Flush writer to ensure all data is on disk
         {
-            let mut writer = self.writer.lock().unwrap();
+            let mut writer = self.writer.lock();
             writer.flush()?;
         }
 
-        let meta = self.meta.lock().unwrap();
+        let meta = self.meta.lock();
         let end_id = end.unwrap_or(meta.next_event_id);
 
         Ok(Box::new(FileEventLogIter::new(
@@ -405,7 +406,7 @@ impl EventLog for FileEventLog {
     }
 
     fn oldest_event_id(&self) -> Result<EventId> {
-        let meta = self.meta.lock().unwrap();
+        let meta = self.meta.lock();
         Ok(meta.oldest_event_id)
     }
 
@@ -419,7 +420,7 @@ impl EventLog for FileEventLog {
     }
 
     fn sync(&self) -> Result<()> {
-        let mut writer = self.writer.lock().unwrap();
+        let mut writer = self.writer.lock();
         writer.flush()?;
         writer.get_ref().sync_all()?;
         self.save_meta()?;
@@ -427,7 +428,7 @@ impl EventLog for FileEventLog {
     }
 
     fn stats(&self) -> Result<EventLogStats> {
-        let meta = self.meta.lock().unwrap();
+        let meta = self.meta.lock();
 
         // Calculate total bytes across all log files
         let mut total_bytes = 0u64;

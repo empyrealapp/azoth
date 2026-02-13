@@ -6,7 +6,7 @@
 //!
 //! Features:
 //! - Fast sequential writes (no ACID overhead)
-//! - Memory-mapped reads for iteration
+//! - Buffered sequential reads for iteration
 //! - Automatic log rotation based on size
 //! - EventId allocation via atomic counter + file sync
 //! - Multiple concurrent readers, single writer

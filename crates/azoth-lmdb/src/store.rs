@@ -8,10 +8,11 @@ use azoth_core::{
 };
 use azoth_file_log::{FileEventLog, FileEventLogConfig};
 use lmdb::{Database, DatabaseFlags, Environment, EnvironmentFlags, Transaction, WriteFlags};
+use parking_lot::Mutex;
 use std::path::Path;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
-    Arc, Mutex,
+    Arc,
 };
 use std::time::Duration;
 
@@ -316,7 +317,7 @@ impl CanonicalStore for LmdbCanonicalStore {
     }
 
     fn seal(&self) -> Result<EventId> {
-        let _guard = self.write_lock.lock().unwrap();
+        let _guard = self.write_lock.lock();
 
         let mut txn = self
             .env
@@ -426,7 +427,7 @@ impl LmdbCanonicalStore {
     /// Sealing is used as a temporary barrier to create deterministic snapshots. Backups should
     /// clear the seal before resuming ingestion; otherwise the DB becomes permanently read-only.
     pub fn clear_seal(&self) -> Result<()> {
-        let _guard = self.write_lock.lock().unwrap();
+        let _guard = self.write_lock.lock();
 
         let mut txn = self
             .env
