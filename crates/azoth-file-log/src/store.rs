@@ -12,6 +12,7 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,
 };
+use tokio::sync::Notify;
 
 /// Configuration for file-based event log
 #[derive(Debug, Clone)]
@@ -81,6 +82,12 @@ pub struct FileEventLog {
     next_event_id: Arc<AtomicU64>,
     writer: Arc<Mutex<BufWriter<File>>>,
     current_file_num: Arc<AtomicU64>,
+    /// Optional notifier that fires after each successful event append.
+    ///
+    /// Enables push-based projection: the projector can `notify.notified().await`
+    /// instead of polling, giving near-zero-latency event processing with zero
+    /// CPU waste when idle.
+    event_notify: Option<Arc<Notify>>,
 }
 
 impl FileEventLog {
@@ -119,7 +126,22 @@ impl FileEventLog {
             next_event_id,
             writer,
             current_file_num,
+            event_notify: None,
         })
+    }
+
+    /// Set the event notification handle.
+    ///
+    /// When set, `notify_waiters()` is called after every successful
+    /// `append_with_id` / `append_batch_with_ids`, waking any task that
+    /// is awaiting `notified()`.
+    pub fn set_event_notify(&mut self, notify: Arc<Notify>) {
+        self.event_notify = Some(notify);
+    }
+
+    /// Get a clone of the event notification handle (if set).
+    pub fn event_notify(&self) -> Option<Arc<Notify>> {
+        self.event_notify.clone()
     }
 
     /// Get path to a log file by number
@@ -257,6 +279,11 @@ impl EventLog for FileEventLog {
         // Check for rotation
         self.check_rotation()?;
 
+        // Wake any waiting projectors / event processors
+        if let Some(notify) = &self.event_notify {
+            notify.notify_waiters();
+        }
+
         Ok(())
     }
 
@@ -345,6 +372,11 @@ impl EventLog for FileEventLog {
 
         // Check for rotation
         self.check_rotation()?;
+
+        // Wake any waiting projectors / event processors
+        if let Some(notify) = &self.event_notify {
+            notify.notify_waiters();
+        }
 
         Ok(())
     }

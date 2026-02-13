@@ -7,6 +7,7 @@ use azoth_core::{
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tokio::sync::Notify;
 
 /// Projector: consumes events from canonical store and applies to projection
 pub struct Projector<C, P>
@@ -18,6 +19,10 @@ where
     projection: Arc<P>,
     config: ProjectorConfig,
     shutdown: Arc<AtomicBool>,
+    /// When set, the projector awaits this notification instead of polling.
+    /// The `FileEventLog` fires `notify_waiters()` after every successful append,
+    /// giving near-zero-latency projection with zero CPU waste when idle.
+    event_notify: Option<Arc<Notify>>,
 }
 
 impl<C, P> Projector<C, P>
@@ -31,7 +36,18 @@ where
             projection,
             config,
             shutdown: Arc::new(AtomicBool::new(false)),
+            event_notify: None,
         }
+    }
+
+    /// Attach an event notification handle for push-based projection.
+    ///
+    /// When set, `run_continuous()` awaits this notification instead of
+    /// sleeping for `poll_interval_ms` when caught up, giving near-zero
+    /// latency event processing with zero idle CPU usage.
+    pub fn with_event_notify(mut self, notify: Arc<Notify>) -> Self {
+        self.event_notify = Some(notify);
+        self
     }
 
     /// Run one iteration of the projector loop
@@ -100,15 +116,30 @@ where
         })
     }
 
-    /// Run the projector continuously until shutdown
+    /// Run the projector continuously until shutdown.
+    ///
+    /// When an `event_notify` handle is set (via [`with_event_notify`]),
+    /// the projector awaits the notification instead of polling, giving
+    /// near-zero-latency projection with zero CPU waste when idle.
+    /// Falls back to `poll_interval_ms` sleep if no notifier is present.
     pub async fn run_continuous(&self) -> Result<()> {
         while !self.shutdown.load(Ordering::SeqCst) {
             match self.run_once() {
                 Ok(stats) => {
                     if stats.events_applied == 0 {
-                        // Caught up, sleep briefly
-                        tokio::time::sleep(Duration::from_millis(self.config.poll_interval_ms))
-                            .await;
+                        // Caught up -- wait for new events
+                        if let Some(notify) = &self.event_notify {
+                            // Push-based: await notification from event log
+                            // Use tokio::select! so we also wake on shutdown
+                            tokio::select! {
+                                _ = notify.notified() => {}
+                                _ = tokio::time::sleep(Duration::from_millis(self.config.poll_interval_ms)) => {}
+                            }
+                        } else {
+                            // Legacy polling fallback
+                            tokio::time::sleep(Duration::from_millis(self.config.poll_interval_ms))
+                                .await;
+                        }
                     } else {
                         tracing::debug!(
                             "Applied {} events, {} bytes in {:?}",

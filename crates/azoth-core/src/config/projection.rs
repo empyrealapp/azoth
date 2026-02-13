@@ -27,11 +27,12 @@ pub struct ProjectionConfig {
     #[serde(default = "default_cache_size")]
     pub cache_size: i32,
 
-    /// Read pool configuration (optional, disabled by default)
+    /// Read pool configuration (enabled by default with 4 connections).
     ///
-    /// When enabled, maintains a pool of read-only connections for
-    /// concurrent read access without blocking writes.
-    #[serde(default)]
+    /// Maintains a pool of read-only connections for concurrent read access
+    /// without blocking writes. Disable with `ReadPoolConfig::default()` if
+    /// you need single-connection behavior.
+    #[serde(default = "default_read_pool")]
     pub read_pool: ReadPoolConfig,
 }
 
@@ -58,6 +59,10 @@ fn default_cache_size() -> i32 {
     -64000 // 64MB
 }
 
+fn default_read_pool() -> ReadPoolConfig {
+    ReadPoolConfig::enabled(4)
+}
+
 impl ProjectionConfig {
     pub fn new(path: PathBuf) -> Self {
         Self {
@@ -66,7 +71,7 @@ impl ProjectionConfig {
             synchronous: SynchronousMode::default(),
             schema_version: default_schema_version(),
             cache_size: default_cache_size(),
-            read_pool: ReadPoolConfig::default(),
+            read_pool: default_read_pool(),
         }
     }
 

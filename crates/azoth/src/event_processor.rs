@@ -11,6 +11,7 @@ use rusqlite::Connection;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Notify;
 
 /// Error handling strategy for failed event processing
 #[allow(clippy::type_complexity)]
@@ -117,8 +118,13 @@ impl EventProcessorBuilder {
         self
     }
 
-    /// Build the event processor
+    /// Build the event processor with an externally-provided connection.
+    ///
+    /// Automatically wires event-driven notification from the database,
+    /// so the processor wakes immediately when new events arrive instead
+    /// of blind-polling.
     pub fn build(self, conn: Arc<Connection>) -> EventProcessor {
+        let event_notify = self.db.event_notify();
         EventProcessor {
             db: self.db,
             conn,
@@ -129,7 +135,45 @@ impl EventProcessorBuilder {
             dlq: self.dlq,
             shutdown: Arc::new(AtomicBool::new(false)),
             cursor: 0,
+            event_notify: Some(event_notify),
         }
+    }
+
+    /// Build the event processor using a dedicated connection to the
+    /// projection database.
+    ///
+    /// Opens a **new** read-write SQLite connection to the same projection
+    /// database file, so handlers can INSERT/UPDATE projection tables without
+    /// contending with the projector's own write connection or the read pool.
+    ///
+    /// This is the recommended builder when you don't need a custom or
+    /// external connection.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut processor = EventProcessor::builder(db)
+    ///     .with_handler(Box::new(MyHandler))
+    ///     .build_with_projection()?;
+    ///
+    /// processor.run().await?;
+    /// ```
+    pub fn build_with_projection(self) -> Result<EventProcessor> {
+        let path = self.db.projection().db_path().to_path_buf();
+        let conn = Connection::open(&path).map_err(|e| {
+            crate::AzothError::Projection(format!(
+                "Failed to open handler connection to {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+
+        // Match WAL mode and pragmas for consistency
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .map_err(|e| crate::AzothError::Projection(e.to_string()))?;
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .map_err(|e| crate::AzothError::Projection(e.to_string()))?;
+
+        Ok(self.build(Arc::new(conn)))
     }
 }
 
@@ -147,6 +191,9 @@ pub struct EventProcessor {
     dlq: Option<Arc<DeadLetterQueue>>,
     shutdown: Arc<AtomicBool>,
     cursor: u64,
+    /// Push-based notification from the event log.
+    /// When set, `run()` awaits this instead of polling when caught up.
+    event_notify: Option<Arc<Notify>>,
 }
 
 impl EventProcessor {
@@ -155,10 +202,13 @@ impl EventProcessor {
         EventProcessorBuilder::new(db)
     }
 
-    /// Run the processor until shutdown is signaled
+    /// Run the processor until shutdown is signaled.
     ///
-    /// This is an async function that runs continuously, polling for new
-    /// events and processing them through registered handlers.
+    /// When the event-driven notifier is active (default when built via
+    /// [`EventProcessorBuilder::build`]), the processor awaits new-event
+    /// notifications instead of polling, giving near-zero latency with
+    /// zero CPU waste when idle. Falls back to `poll_interval` sleep
+    /// if no notifier is present.
     pub async fn run(&mut self) -> Result<()> {
         tracing::info!("Event processor started");
 
@@ -166,8 +216,15 @@ impl EventProcessor {
             let processed = self.process_batch()?;
 
             if processed == 0 {
-                // No events, sleep before polling again
-                tokio::time::sleep(self.poll_interval).await;
+                // Caught up -- wait for new events
+                if let Some(notify) = &self.event_notify {
+                    tokio::select! {
+                        _ = notify.notified() => {}
+                        _ = tokio::time::sleep(self.poll_interval) => {}
+                    }
+                } else {
+                    tokio::time::sleep(self.poll_interval).await;
+                }
             }
         }
 

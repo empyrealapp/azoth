@@ -51,9 +51,11 @@ impl AzothDb {
         let canonical = Arc::new(LmdbCanonicalStore::open(canonical_config)?);
         let projection = Arc::new(SqliteProjectionStore::open(projection_config)?);
 
-        // Create projector
+        // Create projector with push-based notification from the event log
+        let event_notify = canonical.event_notify();
         let projector_config = ProjectorConfig::default();
-        let projector = Projector::new(canonical.clone(), projection.clone(), projector_config);
+        let projector = Projector::new(canonical.clone(), projection.clone(), projector_config)
+            .with_event_notify(event_notify);
 
         Ok(Self {
             canonical,
@@ -72,7 +74,11 @@ impl AzothDb {
     ) -> Result<Self> {
         let canonical = Arc::new(LmdbCanonicalStore::open(canonical_config)?);
         let projection = Arc::new(SqliteProjectionStore::open(projection_config)?);
-        let projector = Projector::new(canonical.clone(), projection.clone(), projector_config);
+
+        // Create projector with push-based notification from the event log
+        let event_notify = canonical.event_notify();
+        let projector = Projector::new(canonical.clone(), projection.clone(), projector_config)
+            .with_event_notify(event_notify);
 
         Ok(Self {
             canonical,
@@ -92,21 +98,27 @@ impl AzothDb {
         &self.projection
     }
 
-    /// Get the underlying SQLite connection for the projection store
+    /// Get the projection **write** connection.
     ///
-    /// This returns a shared reference to the Mutex-protected connection,
-    /// allowing direct SQL access when needed (e.g., for legacy code that
-    /// expects `Arc<Mutex<Connection>>`).
-    ///
-    /// For new code, prefer using `query()`, `execute()`, or `transaction()`
-    /// methods which provide a safer closure-based API.
+    /// Use this for migrations, DDL, and projector event application.
+    /// For read-only queries, prefer `query()` / `query_async()` which
+    /// automatically use the read pool for concurrent access.
     ///
     /// # Example
     /// ```ignore
-    /// let conn = db.projection_connection();
+    /// let conn = db.projection_write_conn();
     /// let guard = conn.lock();
     /// guard.execute("INSERT INTO ...", params![])?;
     /// ```
+    pub fn projection_write_conn(&self) -> &Arc<parking_lot::Mutex<rusqlite::Connection>> {
+        self.projection.write_conn()
+    }
+
+    /// Get the underlying SQLite connection for the projection store.
+    ///
+    /// **Deprecated**: prefer `projection_write_conn()` for writes and
+    /// `query()` / `query_async()` for reads. This method returns the
+    /// write connection, which contends with the projector.
     pub fn projection_connection(&self) -> &Arc<parking_lot::Mutex<rusqlite::Connection>> {
         self.projection.conn()
     }
@@ -114,6 +126,15 @@ impl AzothDb {
     /// Get reference to projector
     pub fn projector(&self) -> &Projector<LmdbCanonicalStore, SqliteProjectionStore> {
         &self.projector
+    }
+
+    /// Get the shared event notification handle.
+    ///
+    /// This `Notify` fires after every successful event append. Consumers
+    /// (event processors, custom projectors) can call `notify.notified().await`
+    /// to wake immediately when new events are available, eliminating polling.
+    pub fn event_notify(&self) -> std::sync::Arc<tokio::sync::Notify> {
+        self.canonical.event_notify()
     }
 
     /// Get the base path
@@ -233,12 +254,14 @@ impl AzothDb {
             projection_config,
         )?);
 
-        // Create projector
+        // Create projector with push-based notification
+        let event_notify = canonical.event_notify();
         let projector = Projector::new(
             canonical.clone(),
             projection.clone(),
             ProjectorConfig::default(),
-        );
+        )
+        .with_event_notify(event_notify);
 
         Ok(Self {
             canonical,
@@ -336,6 +359,48 @@ impl AzothDb {
         F: FnOnce(&rusqlite::Transaction) -> Result<()> + Send + 'static,
     {
         self.projection.transaction_async(f).await
+    }
+
+    /// Execute a write operation on the canonical store asynchronously.
+    ///
+    /// Opens a write transaction, passes it to the closure, and commits
+    /// atomically -- all inside `spawn_blocking`. This replaces ad-hoc
+    /// `spawn_blocking` wrappers at each call site.
+    ///
+    /// # Example
+    /// ```ignore
+    /// use azoth_core::traits::CanonicalTxn;
+    ///
+    /// db.submit_write(|txn| {
+    ///     txn.put_state(b"balance", b"100")?;
+    ///     txn.append_event(b"{\"type\":\"deposit\",\"amount\":100}")?;
+    ///     Ok(())
+    /// }).await?;
+    /// ```
+    pub async fn submit_write<F, R>(&self, f: F) -> Result<R>
+    where
+        F: for<'a> FnOnce(
+                &mut azoth_lmdb::txn::LmdbWriteTxn<'a>,
+            ) -> Result<R>
+            + Send
+            + 'static,
+        R: Send + 'static,
+    {
+        self.canonical.submit_write(f).await
+    }
+
+    /// Create a new write batch for atomic multi-operation commits.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut batch = db.write_batch();
+    /// batch.put(b"key1", b"value1");
+    /// batch.put(b"key2", b"value2");
+    /// batch.append_event(b"batch_update:{\"keys\":2}");
+    /// let info = batch.commit()?;
+    /// ```
+    pub fn write_batch(&self) -> crate::WriteBatch<'_> {
+        crate::WriteBatch::new(self)
     }
 
     /// Scan state keys with a prefix

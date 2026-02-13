@@ -47,6 +47,7 @@ pub mod prelude;
 pub mod recovery_file;
 pub mod transaction;
 pub mod typed_values;
+pub mod write_batch;
 
 // Re-export core types
 pub use azoth_core::{
@@ -64,7 +65,7 @@ pub use azoth_core::{
 };
 
 // Re-export implementations
-pub use azoth_lmdb::{LmdbCanonicalStore, LmdbReadPool, LmdbReadTxn, PooledLmdbReadTxn};
+pub use azoth_lmdb::{LmdbCanonicalStore, LmdbReadPool, LmdbReadTxn, LmdbWriteTxn, PooledLmdbReadTxn};
 pub use azoth_projector::{Projector, ProjectorStats};
 pub use azoth_sqlite::{PooledSqliteConnection, SqliteProjectionStore, SqliteReadPool};
 
@@ -100,3 +101,4 @@ pub use transaction::{
     MAX_DECLARED_KEYS,
 };
 pub use typed_values::{Array, Set, TypedValue, I256, U256};
+pub use write_batch::WriteBatch;
