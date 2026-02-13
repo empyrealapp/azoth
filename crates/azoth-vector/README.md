@@ -155,14 +155,13 @@ let results = search.knn(&query, 20).await?;
 // Search with distance threshold
 let similar_only = search.threshold(&query, 0.5, 100).await?;
 
-// Search with SQL filter
+// Search with structured filter
+let filter = VectorFilter::new()
+    .like("metadata", "%important%")
+    .gt("created_at", "2024-01-01");
+
 let filtered = search
-    .knn_filtered(
-        &query,
-        10,
-        "metadata LIKE ? AND created_at > ?",
-        vec!["%important%".to_string(), "2024-01-01".to_string()],
-    )
+    .knn_filtered(&query, 10, &filter)
     .await?;
 ```
 
@@ -290,13 +289,12 @@ let results = search.knn(&Vector::new(query_embedding), 5).await?;
 let user_preferences = Vector::new(user_embedding);
 let search = VectorSearch::new(db.projection(), "items", "embedding");
 
+let filter = VectorFilter::new()
+    .eq("category", &user_category)
+    .eq_i64("in_stock", 1);
+
 let recommendations = search
-    .knn_filtered(
-        &user_preferences,
-        20,
-        "category = ? AND in_stock = 1",
-        vec![user_category.to_string()],
-    )
+    .knn_filtered(&user_preferences, 20, &filter)
     .await?;
 ```
 

@@ -204,7 +204,7 @@ impl MigrationManager {
 
     /// Initialize the migration history table
     fn init_migration_history(&self, projection: &Arc<crate::SqliteProjectionStore>) -> Result<()> {
-        let conn = projection.conn().lock().unwrap();
+        let conn = projection.conn().lock();
         conn.execute(
             "CREATE TABLE IF NOT EXISTS migration_history (
                 version INTEGER PRIMARY KEY,
@@ -230,7 +230,7 @@ impl MigrationManager {
         );
 
         // Run migration, history write, and schema-version bump atomically.
-        let conn = projection.conn().lock().unwrap();
+        let conn = projection.conn().lock();
         conn.execute_batch("BEGIN IMMEDIATE TRANSACTION")
             .map_err(|e| AzothError::Projection(e.to_string()))?;
 
@@ -299,7 +299,7 @@ impl MigrationManager {
         );
 
         // Execute rollback and metadata updates atomically.
-        let conn = projection.conn().lock().unwrap();
+        let conn = projection.conn().lock();
         conn.execute_batch("BEGIN IMMEDIATE TRANSACTION")
             .map_err(|e| AzothError::Projection(e.to_string()))?;
 
@@ -375,7 +375,7 @@ impl MigrationManager {
     ) -> Result<Vec<MigrationHistoryEntry>> {
         self.init_migration_history(projection)?;
 
-        let conn = projection.conn().lock().unwrap();
+        let conn = projection.conn().lock();
         let mut stmt = conn
             .prepare("SELECT version, name, applied_at FROM migration_history ORDER BY version")
             .map_err(|e| AzothError::Projection(e.to_string()))?;

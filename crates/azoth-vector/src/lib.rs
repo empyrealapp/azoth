@@ -55,5 +55,5 @@ pub mod types;
 
 pub use extension::VectorExtension;
 pub use migration::{add_vector_column, create_vector_table};
-pub use search::VectorSearch;
+pub use search::{VectorFilter, VectorSearch};
 pub use types::{DistanceMetric, SearchResult, Vector, VectorConfig, VectorType};

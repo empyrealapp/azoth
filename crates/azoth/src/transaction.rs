@@ -111,6 +111,25 @@ use azoth_lmdb::preflight_cache::{CachedValue, PreflightCache};
 use std::collections::HashSet;
 use std::sync::Arc;
 
+/// Maximum number of keys that can be declared per transaction.
+///
+/// Declaring too many keys causes excessive stripe lock acquisition, high memory
+/// usage for the value cache, and potential cache pollution. This limit acts as
+/// a safety guard against accidental misuse or denial-of-service scenarios.
+pub const MAX_DECLARED_KEYS: usize = 10_000;
+
+/// Check that the number of declared keys does not exceed [`MAX_DECLARED_KEYS`].
+fn check_key_limit(count: usize) -> Result<()> {
+    if count > MAX_DECLARED_KEYS {
+        return Err(AzothError::Config(format!(
+            "Transaction declares {} keys, which exceeds the maximum of {}. \
+             Consider batching operations or increasing MAX_DECLARED_KEYS.",
+            count, MAX_DECLARED_KEYS
+        )));
+    }
+    Ok(())
+}
+
 // ============================================================================
 // Async Transaction API
 // ============================================================================
@@ -205,6 +224,9 @@ impl AsyncTransaction {
         let db = self.db;
         let declared_keys = self.declared_keys;
         let validators = self.validators;
+
+        // Check key count limit before spawning the blocking task
+        check_key_limit(declared_keys.len())?;
 
         tokio::task::spawn_blocking(move || {
             // Phase 1: Acquire locks on declared keys (sorted, deadlock-free)
@@ -776,6 +798,9 @@ impl<'a> Transaction<'a> {
             }
         }
 
+        // Guard against excessive key declarations
+        check_key_limit(self.declared_keys.len())?;
+
         // Phase 1: Acquire locks on declared keys (sorted, deadlock-free)
         let lock_manager = self.db.canonical().lock_manager();
         let keys_vec: Vec<&[u8]> = self.declared_keys.iter().map(|k| k.as_slice()).collect();
@@ -849,6 +874,9 @@ impl<'a> Transaction<'a> {
         F: for<'b> FnOnce(&mut TransactionContext<'b>) -> Result<()>,
     {
         // No async safety check - caller takes responsibility
+
+        // Guard against excessive key declarations
+        check_key_limit(self.declared_keys.len())?;
 
         // Phase 1: Acquire locks on declared keys (sorted, deadlock-free)
         let lock_manager = self.db.canonical().lock_manager();

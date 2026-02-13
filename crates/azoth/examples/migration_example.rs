@@ -143,7 +143,7 @@ fn main() -> Result<()> {
 
     // Check that tables were created
     {
-        let conn = db.projection().conn().lock().unwrap();
+        let conn = db.projection().conn().lock();
 
         // Query for users table
         let tables: Vec<String> = conn

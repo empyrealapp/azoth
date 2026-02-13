@@ -104,10 +104,10 @@ impl AzothDb {
     /// # Example
     /// ```ignore
     /// let conn = db.projection_connection();
-    /// let guard = conn.lock().unwrap();
+    /// let guard = conn.lock();
     /// guard.execute("INSERT INTO ...", params![])?;
     /// ```
-    pub fn projection_connection(&self) -> &Arc<std::sync::Mutex<rusqlite::Connection>> {
+    pub fn projection_connection(&self) -> &Arc<parking_lot::Mutex<rusqlite::Connection>> {
         self.projection.conn()
     }
 
