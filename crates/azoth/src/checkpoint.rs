@@ -107,9 +107,9 @@ impl LocalStorage {
         }
 
         // Whitelist: only safe filename characters
-        let is_safe = id.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'
-        });
+        let is_safe = id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.');
 
         if !is_safe || id.contains("..") {
             return Err(AzothError::Config(format!(

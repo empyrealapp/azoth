@@ -349,10 +349,7 @@ mod with_extension {
             .eq("category", "electronics")
             .eq_i64("in_stock", 1);
 
-        let results = search
-            .knn_filtered(&query, 10, &filter)
-            .await
-            .unwrap();
+        let results = search.knn_filtered(&query, 10, &filter).await.unwrap();
 
         assert_eq!(results.len(), 2);
         let rowids: std::collections::HashSet<_> = results.iter().map(|r| r.rowid).collect();

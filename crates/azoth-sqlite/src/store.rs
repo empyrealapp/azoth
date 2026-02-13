@@ -4,9 +4,9 @@ use azoth_core::{
     types::EventId,
     ProjectionConfig,
 };
+use parking_lot::Mutex;
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;
-use parking_lot::Mutex;
 use std::sync::Arc;
 
 use crate::read_pool::SqliteReadPool;

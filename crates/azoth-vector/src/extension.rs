@@ -88,9 +88,11 @@ fn validate_extension_path(path: &Path) -> Result<()> {
     }
 
     // If the file exists, reject symlinks
-    if path.exists() && path.symlink_metadata()
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false)
+    if path.exists()
+        && path
+            .symlink_metadata()
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
     {
         return Err(AzothError::Config(format!(
             "Extension path '{}' is a symbolic link. \

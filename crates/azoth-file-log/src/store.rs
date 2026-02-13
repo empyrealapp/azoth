@@ -3,11 +3,11 @@ use azoth_core::{
     event_log::{EventLog, EventLogIterator, EventLogStats},
     types::EventId,
 };
+use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use parking_lot::Mutex;
 use std::sync::{
     atomic::{AtomicU64, Ordering},
     Arc,

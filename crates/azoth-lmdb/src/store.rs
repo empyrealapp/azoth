@@ -8,8 +8,8 @@ use azoth_core::{
 };
 use azoth_file_log::{FileEventLog, FileEventLogConfig};
 use lmdb::{Database, DatabaseFlags, Environment, EnvironmentFlags, Transaction, WriteFlags};
-use std::path::Path;
 use parking_lot::Mutex;
+use std::path::Path;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
