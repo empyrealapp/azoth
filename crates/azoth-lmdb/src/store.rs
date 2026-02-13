@@ -2,8 +2,8 @@ use azoth_core::{
     error::{AzothError, Result},
     event_log::{EventLog, EventLogIterator},
     lock_manager::LockManager,
-    traits::{self, CanonicalStore, EventIter, StateIter},
-    types::{BackupInfo, CanonicalMeta, EventId},
+    traits::{self, CanonicalStore, CanonicalTxn, EventIter, StateIter},
+    types::{BackupInfo, CanonicalMeta, CommitInfo, EventId},
     CanonicalConfig,
 };
 use azoth_file_log::{FileEventLog, FileEventLogConfig};
@@ -15,6 +15,7 @@ use std::sync::{
     Arc,
 };
 use std::time::Duration;
+use tokio::sync::Notify;
 
 use crate::keys::meta_keys;
 use crate::preflight_cache::PreflightCache;
@@ -52,6 +53,12 @@ pub struct LmdbCanonicalStore {
     txn_counter: Arc<AtomicUsize>,
     preflight_cache: Arc<PreflightCache>,
     read_pool: Option<Arc<LmdbReadPool>>,
+    /// Shared notifier that fires after each successful event append.
+    ///
+    /// Created during `open()` and injected into the `FileEventLog`.
+    /// Consumers (projector, event processor) can clone this to await
+    /// new events without polling.
+    event_notify: Arc<Notify>,
 }
 
 impl LmdbCanonicalStore {
@@ -160,14 +167,17 @@ impl CanonicalStore for LmdbCanonicalStore {
             cfg.preflight_cache_enabled,
         ));
 
-        // Initialize file-based event log
+        // Initialize file-based event log with push-based notification
+        let event_notify = Arc::new(Notify::new());
         let event_log_config = FileEventLogConfig {
             base_dir: cfg.path.join("event-log"),
             max_event_size: cfg.event_max_size_bytes,
             max_batch_bytes: cfg.event_batch_max_bytes,
             ..Default::default()
         };
-        let event_log = Arc::new(FileEventLog::open(event_log_config)?);
+        let mut event_log = FileEventLog::open(event_log_config)?;
+        event_log.set_event_notify(event_notify.clone());
+        let event_log = Arc::new(event_log);
 
         // Initialize metadata if needed
         {
@@ -235,6 +245,7 @@ impl CanonicalStore for LmdbCanonicalStore {
             txn_counter: Arc::new(AtomicUsize::new(0)),
             preflight_cache,
             read_pool,
+            event_notify,
         })
     }
 
@@ -544,6 +555,15 @@ impl LmdbCanonicalStore {
         &self.event_log
     }
 
+    /// Get the shared event notification handle.
+    ///
+    /// This `Notify` fires after every successful event append. Consumers
+    /// (projectors, event processors) can call `notify.notified().await` to
+    /// wake immediately when new events are available, eliminating polling.
+    pub fn event_notify(&self) -> Arc<Notify> {
+        self.event_notify.clone()
+    }
+
     /// Get reference to the preflight cache
     ///
     /// This allows access to cache statistics and manual cache operations.
@@ -556,6 +576,114 @@ impl LmdbCanonicalStore {
     /// Returns None if read pooling was not enabled in config.
     pub fn read_pool(&self) -> Option<&Arc<LmdbReadPool>> {
         self.read_pool.as_ref()
+    }
+
+    // ---- Native async write API ----
+
+    /// Execute a write operation asynchronously.
+    ///
+    /// Opens a write transaction, passes it to the closure, and commits
+    /// atomically -- all inside `spawn_blocking`. This centralizes the
+    /// `spawn_blocking` boilerplate that otherwise appears at every call site.
+    ///
+    /// The closure receives a mutable reference to an `LmdbWriteTxn` and
+    /// can perform any combination of `put_state`, `del_state`,
+    /// `append_event`, etc.  The return value `R` is forwarded to the caller.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let info = store.submit_write(|txn| {
+    ///     txn.put_state(b"key", b"value")?;
+    ///     txn.append_event(b"{\"type\":\"put\"}")?;
+    ///     Ok(())
+    /// }).await?;
+    /// ```
+    pub async fn submit_write<F, R>(&self, f: F) -> Result<R>
+    where
+        F: for<'a> FnOnce(&mut LmdbWriteTxn<'a>) -> Result<R> + Send + 'static,
+        R: Send + 'static,
+    {
+        let env = self.env.clone();
+        let state_db = self.state_db;
+        let meta_db = self.meta_db;
+        let event_log = self.event_log.clone();
+        let txn_counter = self.txn_counter.clone();
+        let preflight_cache = self.preflight_cache.clone();
+        let paused = self.paused.clone();
+
+        tokio::task::spawn_blocking(move || {
+            // Check if paused
+            if paused.load(Ordering::SeqCst) {
+                return Err(AzothError::Paused);
+            }
+
+            // Increment transaction counter
+            txn_counter.fetch_add(1, Ordering::SeqCst);
+
+            let rw_txn = match env.begin_rw_txn() {
+                Ok(t) => t,
+                Err(e) => {
+                    txn_counter.fetch_sub(1, Ordering::SeqCst);
+                    return Err(AzothError::Transaction(e.to_string()));
+                }
+            };
+
+            let mut write_txn = LmdbWriteTxn::new(
+                rw_txn,
+                state_db,
+                meta_db,
+                event_log,
+                Arc::downgrade(&txn_counter),
+                preflight_cache,
+            );
+
+            let result = f(&mut write_txn)?;
+            write_txn.commit()?;
+            Ok(result)
+        })
+        .await
+        .map_err(|e| AzothError::Internal(format!("Task join error: {}", e)))?
+    }
+
+    /// Put a single key-value pair asynchronously and commit.
+    ///
+    /// Convenience wrapper around [`Self::submit_write`] for the common case of
+    /// writing a single key without an event.
+    pub async fn async_put_state(&self, key: &[u8], value: &[u8]) -> Result<CommitInfo> {
+        let key = key.to_vec();
+        let value = value.to_vec();
+        self.submit_write(move |txn| {
+            txn.put_state(&key, &value)?;
+            Ok(())
+        })
+        .await?;
+        // submit_write commits; return a minimal CommitInfo
+        Ok(CommitInfo {
+            events_written: 0,
+            first_event_id: None,
+            last_event_id: None,
+            state_keys_written: 1,
+            state_keys_deleted: 0,
+        })
+    }
+
+    /// Delete a single key asynchronously and commit.
+    ///
+    /// Convenience wrapper around [`Self::submit_write`].
+    pub async fn async_del_state(&self, key: &[u8]) -> Result<CommitInfo> {
+        let key = key.to_vec();
+        self.submit_write(move |txn| {
+            txn.del_state(&key)?;
+            Ok(())
+        })
+        .await?;
+        Ok(CommitInfo {
+            events_written: 0,
+            first_event_id: None,
+            last_event_id: None,
+            state_keys_written: 0,
+            state_keys_deleted: 1,
+        })
     }
 
     /// Check if read pooling is enabled

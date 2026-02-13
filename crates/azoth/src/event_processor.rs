@@ -11,6 +11,7 @@ use rusqlite::Connection;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Notify;
 
 /// Error handling strategy for failed event processing
 #[allow(clippy::type_complexity)]
@@ -117,8 +118,13 @@ impl EventProcessorBuilder {
         self
     }
 
-    /// Build the event processor
+    /// Build the event processor with an externally-provided connection.
+    ///
+    /// Automatically wires event-driven notification from the database,
+    /// so the processor wakes immediately when new events arrive instead
+    /// of blind-polling.
     pub fn build(self, conn: Arc<Connection>) -> EventProcessor {
+        let event_notify = self.db.event_notify();
         EventProcessor {
             db: self.db,
             conn,
@@ -128,8 +134,50 @@ impl EventProcessorBuilder {
             error_strategy: self.error_strategy,
             dlq: self.dlq,
             shutdown: Arc::new(AtomicBool::new(false)),
-            cursor: 0,
+            cursor: None,
+            event_notify: Some(event_notify),
         }
+    }
+
+    /// Build the event processor using a dedicated connection to the
+    /// projection database.
+    ///
+    /// Opens a **new** read-write SQLite connection to the same projection
+    /// database file, so handlers can INSERT/UPDATE projection tables without
+    /// contending with the projector's own write connection or the read pool.
+    ///
+    /// This is the recommended builder when you don't need a custom or
+    /// external connection.
+    ///
+    /// # Example
+    /// ```ignore
+    /// let mut processor = EventProcessor::builder(db)
+    ///     .with_handler(Box::new(MyHandler))
+    ///     .build_with_projection()?;
+    ///
+    /// processor.run().await?;
+    /// ```
+    pub fn build_with_projection(self) -> Result<EventProcessor> {
+        let path = self.db.projection().db_path().to_path_buf();
+        let conn = Connection::open(&path).map_err(|e| {
+            crate::AzothError::Projection(format!(
+                "Failed to open handler connection to {}: {}",
+                path.display(),
+                e
+            ))
+        })?;
+
+        // Match WAL mode and pragmas for consistency
+        conn.pragma_update(None, "journal_mode", "WAL")
+            .map_err(|e| crate::AzothError::Projection(e.to_string()))?;
+        conn.pragma_update(None, "foreign_keys", "ON")
+            .map_err(|e| crate::AzothError::Projection(e.to_string()))?;
+
+        // EventProcessor is intentionally !Send (single-threaded owner of
+        // the Connection), so Arc is used only for shared ownership within
+        // that thread, not for cross-thread sharing.
+        #[allow(clippy::arc_with_non_send_sync)]
+        Ok(self.build(Arc::new(conn)))
     }
 }
 
@@ -146,7 +194,12 @@ pub struct EventProcessor {
     error_strategy: ErrorStrategy,
     dlq: Option<Arc<DeadLetterQueue>>,
     shutdown: Arc<AtomicBool>,
-    cursor: u64,
+    /// Last successfully processed event ID, or `None` if no events
+    /// have been processed yet (so event 0 is not accidentally skipped).
+    cursor: Option<u64>,
+    /// Push-based notification from the event log.
+    /// When set, `run()` awaits this instead of polling when caught up.
+    event_notify: Option<Arc<Notify>>,
 }
 
 impl EventProcessor {
@@ -155,10 +208,13 @@ impl EventProcessor {
         EventProcessorBuilder::new(db)
     }
 
-    /// Run the processor until shutdown is signaled
+    /// Run the processor until shutdown is signaled.
     ///
-    /// This is an async function that runs continuously, polling for new
-    /// events and processing them through registered handlers.
+    /// When the event-driven notifier is active (default when built via
+    /// [`EventProcessorBuilder::build`]), the processor awaits new-event
+    /// notifications instead of polling, giving near-zero latency with
+    /// zero CPU waste when idle. Falls back to `poll_interval` sleep
+    /// if no notifier is present.
     pub async fn run(&mut self) -> Result<()> {
         tracing::info!("Event processor started");
 
@@ -166,8 +222,15 @@ impl EventProcessor {
             let processed = self.process_batch()?;
 
             if processed == 0 {
-                // No events, sleep before polling again
-                tokio::time::sleep(self.poll_interval).await;
+                // Caught up -- wait for new events
+                if let Some(notify) = &self.event_notify {
+                    tokio::select! {
+                        _ = notify.notified() => {}
+                        _ = tokio::time::sleep(self.poll_interval) => {}
+                    }
+                } else {
+                    tokio::time::sleep(self.poll_interval).await;
+                }
             }
         }
 
@@ -200,24 +263,30 @@ impl EventProcessor {
     pub fn process_batch(&mut self) -> Result<usize> {
         let canonical = self.db.as_ref().canonical();
         let meta = canonical.as_ref().meta()?;
-        let tip = if meta.next_event_id > 0 {
-            meta.next_event_id - 1
-        } else {
-            0
-        };
 
-        if self.cursor >= tip {
+        // Nothing to do if no events exist at all
+        if meta.next_event_id == 0 {
             return Ok(0);
         }
 
-        let to = std::cmp::min(tip + 1, self.cursor + self.batch_size as u64 + 1);
-        let mut iter = canonical.as_ref().iter_events(self.cursor + 1, Some(to))?;
+        let tip = meta.next_event_id - 1;
+
+        // Already caught up?
+        if let Some(c) = self.cursor {
+            if c >= tip {
+                return Ok(0);
+            }
+        }
+
+        let start = self.cursor.map(|c| c + 1).unwrap_or(0);
+        let to = std::cmp::min(tip + 1, start + self.batch_size as u64);
+        let mut iter = canonical.as_ref().iter_events(start, Some(to))?;
         let mut processed = 0;
 
         while let Some((id, bytes)) = iter.next()? {
             match self.registry.process(self.conn.as_ref(), id, &bytes) {
                 Ok(_) => {
-                    self.cursor = id;
+                    self.cursor = Some(id);
                     processed += 1;
                 }
                 Err(e) => {
@@ -226,7 +295,7 @@ impl EventProcessor {
                         ErrorAction::Stop => return Err(e),
                         ErrorAction::Skip => {
                             tracing::warn!("Skipping event {} due to error: {}", id, e);
-                            self.cursor = id;
+                            self.cursor = Some(id);
                         }
                         ErrorAction::Retry => {
                             tracing::info!("Will retry event {} on next batch", id);
@@ -242,7 +311,7 @@ impl EventProcessor {
                                             dlq_id,
                                             e
                                         );
-                                        self.cursor = id; // Move past the failed event
+                                        self.cursor = Some(id);
                                     }
                                     Err(dlq_err) => {
                                         tracing::error!(
@@ -266,7 +335,7 @@ impl EventProcessor {
         }
 
         if processed > 0 {
-            tracing::debug!("Processed {} events (cursor: {})", processed, self.cursor);
+            tracing::debug!("Processed {} events (cursor: {:?})", processed, self.cursor);
         }
 
         Ok(processed)
@@ -319,8 +388,8 @@ impl EventProcessor {
         }
     }
 
-    /// Get the current cursor position
-    pub fn cursor(&self) -> u64 {
+    /// Get the current cursor position (`None` if no events processed yet)
+    pub fn cursor(&self) -> Option<u64> {
         self.cursor
     }
 
@@ -328,12 +397,8 @@ impl EventProcessor {
     pub fn lag(&self) -> Result<u64> {
         let canonical = self.db.as_ref().canonical();
         let meta = canonical.as_ref().meta()?;
-        let tip = if meta.next_event_id > 0 {
-            meta.next_event_id - 1
-        } else {
-            0
-        };
-        Ok(tip.saturating_sub(self.cursor))
+        let consumed = self.cursor.map(|c| c + 1).unwrap_or(0);
+        Ok(meta.next_event_id.saturating_sub(consumed))
     }
 }
 

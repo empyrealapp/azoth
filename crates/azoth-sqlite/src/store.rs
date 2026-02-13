@@ -33,11 +33,20 @@ pub struct SqliteProjectionStore {
 }
 
 impl SqliteProjectionStore {
-    /// Get the underlying write connection (for migrations and custom queries)
+    /// Get the underlying write connection (for migrations and custom queries).
     ///
-    /// Returns an Arc to the Mutex-protected SQLite connection.
-    /// Users should lock the mutex to access the connection.
+    /// **Prefer `write_conn()`** for new code -- this method exists for
+    /// backwards compatibility.
     pub fn conn(&self) -> &Arc<Mutex<Connection>> {
+        &self.write_conn
+    }
+
+    /// Get the write connection explicitly.
+    ///
+    /// Use this for migrations, DDL, projector event application, and any
+    /// other operations that mutate the projection database. Reads should
+    /// go through `read_pool()`, `query()`, or `query_async()` instead.
+    pub fn write_conn(&self) -> &Arc<Mutex<Connection>> {
         &self.write_conn
     }
 
