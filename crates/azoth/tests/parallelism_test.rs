@@ -92,8 +92,7 @@ fn test_non_conflicting_keys_parallel_lock_acquisition() {
 
     println!(
         "✅ Non-conflicting lock acquisition: {:?} wall (parallel) vs {:?} serial estimate",
-        total_wall_time,
-        serial_estimate
+        total_wall_time, serial_estimate
     );
 }
 
@@ -233,8 +232,8 @@ fn test_parallelism_throughput_comparison() {
                 let end = Instant::now() + duration;
                 let mut local_ops = 0u64;
                 while Instant::now() < end {
-                    let key_idx = (base_key + (local_ops as usize) % (num_keys / num_threads))
-                        % num_keys;
+                    let key_idx =
+                        (base_key + (local_ops as usize) % (num_keys / num_threads)) % num_keys;
                     let key = format!("key_{}", key_idx);
                     if Transaction::new(&db)
                         .keys(vec![key.as_bytes().to_vec()])
@@ -318,8 +317,6 @@ fn test_parallelism_throughput_comparison() {
     let ratio = non_conflicting_total as f64 / conflicting_total.max(1) as f64;
     println!(
         "✅ Throughput comparison: non-conflicting {} ops/s vs conflicting {} ops/s ({:.2}x ratio)",
-        non_conflicting_total,
-        conflicting_total,
-        ratio
+        non_conflicting_total, conflicting_total, ratio
     );
 }

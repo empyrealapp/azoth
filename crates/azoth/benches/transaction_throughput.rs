@@ -186,10 +186,7 @@ fn bench_parallelism_conflicting_vs_non_conflicting(c: &mut Criterion) {
                             Transaction::new(&db)
                                 .keys(vec![key.as_bytes().to_vec()])
                                 .execute(|ctx| {
-                                    ctx.set(
-                                        key.as_bytes(),
-                                        &TypedValue::U64(1000),
-                                    )?;
+                                    ctx.set(key.as_bytes(), &TypedValue::U64(1000))?;
                                     Ok(())
                                 })
                                 .unwrap();
@@ -277,10 +274,7 @@ fn bench_parallelism_conflicting_vs_non_conflicting(c: &mut Criterion) {
                                                     TypedValue::U64(x) => x,
                                                     _ => 0,
                                                 };
-                                                ctx.set(
-                                                    b"hot_key",
-                                                    &TypedValue::U64(v - 1),
-                                                )?;
+                                                ctx.set(b"hot_key", &TypedValue::U64(v - 1))?;
                                                 Ok(())
                                             })
                                             .ok();
