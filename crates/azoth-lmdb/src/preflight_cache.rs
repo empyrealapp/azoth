@@ -2,9 +2,14 @@
 //!
 //! This module provides an optional cache to speed up preflight validation by caching
 //! frequently accessed state keys. The cache is global, thread-safe, and supports:
-//! - LRU eviction when capacity is reached
+//! - **FIFO eviction** when capacity is reached (oldest insertion is evicted first)
 //! - TTL-based expiration for stale entries
 //! - Invalidation on transaction commit for modified keys
+//!
+//! **Note**: The eviction policy is FIFO (First In, First Out), not LRU. This means
+//! a frequently-read key can still be evicted if it was inserted earliest. For most
+//! workloads this is acceptable because the TTL ensures freshness, and the cache's
+//! primary goal is to reduce LMDB reads for "just written" keys during preflight.
 
 use dashmap::DashMap;
 use parking_lot::Mutex;
@@ -99,7 +104,7 @@ impl PreflightCache {
 
     /// Insert a value into the cache.
     ///
-    /// If the cache is at capacity, evicts the least recently used entry.
+    /// If the cache is at capacity, evicts the oldest entry (FIFO order).
     /// This is a no-op if the cache is disabled.
     pub fn insert(&self, key: Vec<u8>, value: CachedValue) {
         if !self.enabled {

@@ -42,7 +42,7 @@
 //!
 //! // Search for similar vectors
 //! let query = Vector::new(vec![0.15, 0.25, 0.35]);
-//! let search = VectorSearch::new(db.projection().clone(), "embeddings", "vector");
+//! let search = VectorSearch::new(db.projection().clone(), "embeddings", "vector")?;
 //! let results = search.knn(&query, 10).await?;
 //! # Ok(())
 //! # }

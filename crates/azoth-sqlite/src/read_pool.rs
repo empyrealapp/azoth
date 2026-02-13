@@ -9,6 +9,7 @@ use azoth_core::{
 };
 use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::sync::{Semaphore, SemaphorePermit};
@@ -76,6 +77,8 @@ pub struct SqliteReadPool {
     acquire_timeout: Duration,
     enabled: bool,
     db_path: PathBuf,
+    /// Round-robin index for distributing connection acquisition attempts
+    next_idx: AtomicUsize,
 }
 
 impl SqliteReadPool {
@@ -102,6 +105,7 @@ impl SqliteReadPool {
             acquire_timeout: Duration::from_millis(config.acquire_timeout_ms),
             enabled: config.enabled,
             db_path: db_path.to_path_buf(),
+            next_idx: AtomicUsize::new(0),
         })
     }
 
@@ -120,9 +124,11 @@ impl SqliteReadPool {
             })?
             .map_err(|e| AzothError::Internal(format!("Semaphore closed: {}", e)))?;
 
-        // Find an available connection (the permit ensures one is available)
-        for conn in &self.connections {
-            if let Ok(guard) = conn.try_lock() {
+        // Round-robin: start from next_idx to distribute lock contention
+        let start = self.next_idx.fetch_add(1, Ordering::Relaxed) % self.connections.len();
+        for i in 0..self.connections.len() {
+            let idx = (start + i) % self.connections.len();
+            if let Ok(guard) = self.connections[idx].try_lock() {
                 return Ok(PooledSqliteConnection {
                     conn: guard,
                     _permit: permit,
@@ -142,8 +148,11 @@ impl SqliteReadPool {
     pub fn try_acquire(&self) -> Result<Option<PooledSqliteConnection<'_>>> {
         match self.semaphore.try_acquire() {
             Ok(permit) => {
-                for conn in &self.connections {
-                    if let Ok(guard) = conn.try_lock() {
+                // Round-robin: start from next_idx to distribute lock contention
+                let start = self.next_idx.fetch_add(1, Ordering::Relaxed) % self.connections.len();
+                for i in 0..self.connections.len() {
+                    let idx = (start + i) % self.connections.len();
+                    if let Ok(guard) = self.connections[idx].try_lock() {
                         return Ok(Some(PooledSqliteConnection {
                             conn: guard,
                             _permit: permit,

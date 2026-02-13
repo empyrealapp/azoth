@@ -32,6 +32,15 @@ pub struct FileEventLogConfig {
 
     /// Maximum total size for a single append batch (bytes)
     pub max_batch_bytes: usize,
+
+    /// Whether to flush the write buffer after each append (default: true).
+    ///
+    /// When `true`, every `append_with_id` / `append_events_batch` call flushes
+    /// the `BufWriter`, ensuring data reaches the OS page cache immediately.
+    /// Set to `false` for maximum throughput at the cost of losing in-flight
+    /// buffered events on a process crash (the OS-level file won't be corrupted,
+    /// but un-flushed events will be lost).
+    pub flush_on_append: bool,
 }
 
 impl Default for FileEventLogConfig {
@@ -43,6 +52,7 @@ impl Default for FileEventLogConfig {
             batch_buffer_size: 1024 * 1024,    // 1MB for batch writes
             max_event_size: 4 * 1024 * 1024,   // 4MB single-event limit
             max_batch_bytes: 64 * 1024 * 1024, // 64MB batch limit
+            flush_on_append: true,
         }
     }
 }
@@ -227,6 +237,12 @@ impl EventLog for FileEventLog {
         // Write event entry
         self.write_event_entry(event_id, event_bytes)?;
 
+        // Conditionally flush based on config
+        if self.config.flush_on_append {
+            let mut writer = self.writer.lock().unwrap();
+            writer.flush()?;
+        }
+
         // Update metadata
         {
             let mut meta = self.meta.lock().unwrap();
@@ -309,8 +325,8 @@ impl EventLog for FileEventLog {
             writer.write_all(&buffer)?;
         }
 
-        // Flush after batch
-        {
+        // Conditionally flush based on config
+        if self.config.flush_on_append {
             let mut writer = self.writer.lock().unwrap();
             writer.flush()?;
         }
@@ -580,6 +596,7 @@ mod tests {
             batch_buffer_size: 4096,
             max_event_size: 1024 * 1024,
             max_batch_bytes: 16 * 1024 * 1024,
+            flush_on_append: true,
         };
         let log = FileEventLog::open(config).unwrap();
         (log, temp_dir)

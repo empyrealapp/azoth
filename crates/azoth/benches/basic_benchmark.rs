@@ -94,12 +94,12 @@ fn main() {
     println!("   {} transactions in {:?}", count, duration);
     println!("   {:.2} tx/sec\n", tps);
 
-    // Benchmark 6: State reads
+    // Benchmark 6: State reads (using read-only transactions to avoid blocking writers)
     println!("6. State Read Performance");
     let start = Instant::now();
     let count = 10_000;
     for i in 0..count {
-        let txn = db.canonical().write_txn().unwrap();
+        let txn = db.canonical().read_txn().unwrap();
         let key = format!("key_{}", i % 100); // Read from first 100 keys
         let _ = txn.get_state(key.as_bytes()).unwrap();
     }
