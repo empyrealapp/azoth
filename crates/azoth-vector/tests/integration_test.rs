@@ -82,7 +82,8 @@ fn download_extension_macos() -> Option<PathBuf> {
     let _ = fs::create_dir_all(&out_dir);
 
     let resp = ureq::get(ZIP_URL).call().ok()?;
-    let zip_bytes: Vec<u8> = resp.into_reader().bytes().filter_map(|b| b.ok()).collect();
+    let mut zip_bytes = Vec::new();
+    std::io::Read::read_to_end(&mut resp.into_reader(), &mut zip_bytes).ok()?;
     let mut archive = zip::ZipArchive::new(std::io::Cursor::new(zip_bytes)).ok()?;
 
     for i in 0..archive.len() {
@@ -242,7 +243,7 @@ mod with_extension {
             )
             .unwrap();
 
-        let vectors = vec![
+        let vectors = [
             (Vector::new(vec![1.0, 0.0, 0.0]), "x-axis"),
             (Vector::new(vec![0.0, 1.0, 0.0]), "y-axis"),
             (Vector::new(vec![0.0, 0.0, 1.0]), "z-axis"),
@@ -319,7 +320,7 @@ mod with_extension {
             )
             .unwrap();
 
-        let items = vec![
+        let items = [
             (vec![1.0, 0.0, 0.0], "electronics", 1),
             (vec![0.9, 0.1, 0.0], "electronics", 1),
             (vec![0.0, 1.0, 0.0], "books", 1),
@@ -387,7 +388,7 @@ mod with_extension {
             )
             .unwrap();
 
-        let vectors = vec![
+        let vectors = [
             vec![1.0, 0.0, 0.0],
             vec![0.5, 0.5, 0.0],
             vec![0.0, 1.0, 0.0],

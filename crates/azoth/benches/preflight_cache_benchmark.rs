@@ -18,6 +18,7 @@ fn create_db_with_cache(path: &std::path::Path, cache_enabled: bool) -> AzothDb 
 fn benchmark_hot_key_reads(db: &AzothDb, iterations: usize) -> std::time::Duration {
     // Initialize a hot key
     Transaction::new(db)
+        .keys(vec![b"hot_key".to_vec()])
         .execute(|ctx| {
             ctx.set(b"hot_key", &TypedValue::I64(1000))?;
             Ok(())
@@ -27,16 +28,15 @@ fn benchmark_hot_key_reads(db: &AzothDb, iterations: usize) -> std::time::Durati
     // Benchmark reading the same key repeatedly during preflight
     let start = Instant::now();
     for i in 0..iterations {
+        let counter_key = format!("counter_{}", i);
         Transaction::new(db)
-            .keys(vec![b"hot_key".to_vec()])
+            .keys(vec![b"hot_key".to_vec(), counter_key.as_bytes().to_vec()])
             .preflight(|ctx| {
                 let _value = ctx.get(b"hot_key")?;
                 Ok(())
             })
             .execute(|ctx| {
-                // Write a dummy key to make it a real transaction
-                let key = format!("counter_{}", i);
-                ctx.set(key.as_bytes(), &TypedValue::I64(i as i64))?;
+                ctx.set(counter_key.as_bytes(), &TypedValue::I64(i as i64))?;
                 Ok(())
             })
             .unwrap();
@@ -46,7 +46,11 @@ fn benchmark_hot_key_reads(db: &AzothDb, iterations: usize) -> std::time::Durati
 
 fn benchmark_mixed_workload(db: &AzothDb, iterations: usize) -> std::time::Duration {
     // Initialize some keys
+    let init_keys: Vec<Vec<u8>> = (0..10)
+        .map(|i| format!("mixed_key_{}", i).into_bytes())
+        .collect();
     Transaction::new(db)
+        .keys(init_keys)
         .execute(|ctx| {
             for i in 0..10 {
                 let key = format!("mixed_key_{}", i);
@@ -61,15 +65,18 @@ fn benchmark_mixed_workload(db: &AzothDb, iterations: usize) -> std::time::Durat
     for i in 0..iterations {
         let key_idx = i % 10; // Read keys in round-robin fashion
         let key = format!("mixed_key_{}", key_idx);
+        let counter_key = format!("counter_{}", i);
 
         Transaction::new(db)
-            .keys(vec![key.as_bytes().to_vec()])
+            .keys(vec![
+                key.as_bytes().to_vec(),
+                counter_key.as_bytes().to_vec(),
+            ])
             .preflight(|ctx| {
                 let _value = ctx.get(key.as_bytes())?;
                 Ok(())
             })
             .execute(|ctx| {
-                let counter_key = format!("counter_{}", i);
                 ctx.set(counter_key.as_bytes(), &TypedValue::I64(i as i64))?;
                 Ok(())
             })
@@ -105,7 +112,11 @@ fn benchmark_concurrent_hot_keys(
     iterations_per_thread: usize,
 ) -> std::time::Duration {
     // Initialize hot keys
+    let init_keys: Vec<Vec<u8>> = (0..num_threads)
+        .map(|i| format!("thread_key_{}", i).into_bytes())
+        .collect();
     Transaction::new(&db)
+        .keys(init_keys)
         .execute(|ctx| {
             for i in 0..num_threads {
                 let key = format!("thread_key_{}", i);
@@ -124,14 +135,17 @@ fn benchmark_concurrent_hot_keys(
         let handle = thread::spawn(move || {
             let key = format!("thread_key_{}", thread_id);
             for i in 0..iterations_per_thread {
+                let counter_key = format!("counter_{}_{}", thread_id, i);
                 Transaction::new(&db_clone)
-                    .keys(vec![key.as_bytes().to_vec()])
+                    .keys(vec![
+                        key.as_bytes().to_vec(),
+                        counter_key.as_bytes().to_vec(),
+                    ])
                     .preflight(|ctx| {
                         let _value = ctx.get(key.as_bytes())?;
                         Ok(())
                     })
                     .execute(|ctx| {
-                        let counter_key = format!("counter_{}_{}", thread_id, i);
                         ctx.set(counter_key.as_bytes(), &TypedValue::I64(i as i64))?;
                         Ok(())
                     })

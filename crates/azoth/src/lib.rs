@@ -55,7 +55,8 @@ pub use azoth_core::{
         CanonicalConfig, ProjectionConfig, ProjectorConfig, ReadPoolConfig, SyncMode,
         SynchronousMode,
     },
-    error::{AzothError, Result},
+    error::{AzothError, Result, ResultExt},
+    observe,
     traits::{
         CanonicalReadTxn, CanonicalStore, CanonicalTxn, DecodedEvent, EventApplier, EventDecoder,
         EventIter, PreflightResult, ProjectionStore, ProjectionTxn, StateIter,
@@ -66,7 +67,7 @@ pub use azoth_core::{
 
 // Re-export implementations
 pub use azoth_lmdb::{
-    LmdbCanonicalStore, LmdbReadPool, LmdbReadTxn, LmdbWriteTxn, PooledLmdbReadTxn,
+    EvictionPolicy, LmdbCanonicalStore, LmdbReadPool, LmdbReadTxn, LmdbWriteTxn, PooledLmdbReadTxn,
 };
 pub use azoth_projector::{Projector, ProjectorStats};
 pub use azoth_sqlite::{PooledSqliteConnection, SqliteProjectionStore, SqliteReadPool};

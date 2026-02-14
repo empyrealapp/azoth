@@ -119,6 +119,10 @@ impl AzothDb {
     /// **Deprecated**: prefer `projection_write_conn()` for writes and
     /// `query()` / `query_async()` for reads. This method returns the
     /// write connection, which contends with the projector.
+    #[deprecated(
+        since = "0.3.0",
+        note = "Use query()/query_async() for reads, projection_write_conn() for writes"
+    )]
     pub fn projection_connection(&self) -> &Arc<parking_lot::Mutex<rusqlite::Connection>> {
         self.projection.conn()
     }

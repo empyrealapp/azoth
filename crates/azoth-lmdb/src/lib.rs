@@ -19,6 +19,7 @@ pub mod state_iter;
 pub mod store;
 pub mod txn;
 
+pub use preflight_cache::EvictionPolicy;
 pub use read_pool::{LmdbReadPool, PooledLmdbReadTxn};
 pub use store::LmdbCanonicalStore;
 pub use txn::{LmdbReadTxn, LmdbWriteTxn};

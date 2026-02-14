@@ -24,6 +24,13 @@ chrono = { workspace = true }
 rusqlite = { workspace = true }
 parking_lot = { workspace = true }
 
+# Optional metrics support
+metrics = { version = "0.24", optional = true }
+
+[features]
+default = []
+observe = ["metrics"]
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tracing-subscriber = { workspace = true }
