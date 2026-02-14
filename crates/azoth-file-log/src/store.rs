@@ -219,8 +219,7 @@ impl FileEventLog {
         let interval_secs = self.config.disk_check_interval_secs;
 
         Some(tokio::spawn(async move {
-            let mut interval =
-                tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
             interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
             loop {
@@ -263,7 +262,8 @@ impl FileEventLog {
     ///
     /// This is a zero-cost atomic load — safe to call on every commit.
     pub fn is_low_disk_space(&self) -> bool {
-        self.low_disk_space.load(std::sync::atomic::Ordering::Relaxed)
+        self.low_disk_space
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Get path to a log file by number

@@ -81,9 +81,9 @@ impl DeadLetterQueue {
         use base64::Engine;
 
         let mut guard = self.writer.lock();
-        let file = guard.as_mut().ok_or_else(|| {
-            AzothError::InvalidState("DLQ file handle is closed".into())
-        })?;
+        let file = guard
+            .as_mut()
+            .ok_or_else(|| AzothError::InvalidState("DLQ file handle is closed".into()))?;
 
         let timestamp = chrono::Utc::now().to_rfc3339();
 
@@ -102,7 +102,10 @@ impl DeadLetterQueue {
             writeln!(file, "{}", json).map_err(|e| {
                 AzothError::Io(std::io::Error::new(
                     e.kind(),
-                    format!("Failed to write DLQ entry for event {}: {}", entry.event_id, e),
+                    format!(
+                        "Failed to write DLQ entry for event {}: {}",
+                        entry.event_id, e
+                    ),
                 ))
             })?;
         }
@@ -129,7 +132,10 @@ impl DeadLetterQueue {
     pub fn read_all(&self) -> Result<Vec<DlqEntry>> {
         let file = File::open(&self.path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
-                return AzothError::NotFound(format!("DLQ file not found: {}", self.path.display()));
+                return AzothError::NotFound(format!(
+                    "DLQ file not found: {}",
+                    self.path.display()
+                ));
             }
             AzothError::Io(e)
         })?;
