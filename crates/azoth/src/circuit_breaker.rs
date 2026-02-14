@@ -317,11 +317,37 @@ impl CircuitBreaker {
         }
     }
 
-    async fn on_success(&self) {
+    /// Record a successful operation.
+    ///
+    /// Use this when the protected operation is async and can't be wrapped
+    /// inside [`Self::call`]. For sync operations prefer [`Self::call`] which handles
+    /// recording automatically.
+    pub async fn record_success(&self) {
+        self.on_success_inner().await;
+    }
+
+    /// Record a failed operation.
+    ///
+    /// Use this when the protected operation is async and can't be wrapped
+    /// inside [`Self::call`]. For sync operations prefer [`Self::call`] which handles
+    /// recording automatically.
+    pub async fn record_failure(&self) {
+        self.on_failure_inner().await;
+    }
+
+    async fn on_success_inner(&self) {
         self.metrics.record_success();
     }
 
+    async fn on_success(&self) {
+        self.on_success_inner().await;
+    }
+
     async fn on_failure(&self) {
+        self.on_failure_inner().await;
+    }
+
+    async fn on_failure_inner(&self) {
         self.metrics.record_failure();
 
         let mut state = self.state.lock().await;

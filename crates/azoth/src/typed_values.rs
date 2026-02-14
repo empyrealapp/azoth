@@ -164,6 +164,45 @@ impl From<u64> for U256 {
     }
 }
 
+/// Access the raw 4×u64 little-endian limbs.
+impl U256 {
+    /// Return a reference to the inner 4×u64 words (little-endian order).
+    pub fn as_limbs(&self) -> &[u64; 4] {
+        &self.0
+    }
+
+    /// Construct from raw 4×u64 words in little-endian order.
+    pub fn from_limbs(limbs: [u64; 4]) -> Self {
+        Self(limbs)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// alloy-primitives interop (behind "alloy" feature)
+// ---------------------------------------------------------------------------
+#[cfg(feature = "alloy")]
+mod alloy_interop {
+    use super::U256;
+
+    impl From<alloy_primitives::U256> for U256 {
+        /// Convert an `alloy_primitives::U256` into an azoth `U256`.
+        ///
+        /// Both representations use 4×u64 little-endian limbs, so this is a
+        /// zero-cost reinterpretation.
+        fn from(v: alloy_primitives::U256) -> Self {
+            let limbs: [u64; 4] = v.into_limbs();
+            U256::from_limbs(limbs)
+        }
+    }
+
+    impl From<U256> for alloy_primitives::U256 {
+        /// Convert an azoth `U256` back into an `alloy_primitives::U256`.
+        fn from(v: U256) -> Self {
+            alloy_primitives::U256::from_limbs(*v.as_limbs())
+        }
+    }
+}
+
 /// 256-bit signed integer
 ///
 /// Note: Currently aliased to U256. This means signed operations are not properly
@@ -921,5 +960,35 @@ mod tests {
         // Should fail when trying to deserialize from non-Bytes
         let result: Result<String> = value.to_json();
         assert!(result.is_err());
+    }
+
+    #[cfg(feature = "alloy")]
+    mod alloy_tests {
+        use super::*;
+
+        #[test]
+        fn test_alloy_u256_roundtrip() {
+            let alloy_val = alloy_primitives::U256::from(1_000_000u64);
+            let azoth_val: U256 = alloy_val.into();
+            let back: alloy_primitives::U256 = azoth_val.into();
+            assert_eq!(alloy_val, back);
+        }
+
+        #[test]
+        fn test_alloy_u256_large_value() {
+            let alloy_val = alloy_primitives::U256::MAX;
+            let azoth_val: U256 = alloy_val.into();
+            let back: alloy_primitives::U256 = azoth_val.into();
+            assert_eq!(alloy_val, back);
+        }
+
+        #[test]
+        fn test_alloy_u256_zero() {
+            let alloy_val = alloy_primitives::U256::ZERO;
+            let azoth_val: U256 = alloy_val.into();
+            assert_eq!(azoth_val, U256::zero());
+            let back: alloy_primitives::U256 = azoth_val.into();
+            assert_eq!(alloy_val, back);
+        }
     }
 }

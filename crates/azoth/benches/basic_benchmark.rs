@@ -82,6 +82,7 @@ fn main() {
     let count = 10_000;
     for i in 0..count {
         Transaction::new(&db)
+            .keys(vec![b"counter".to_vec()])
             .execute(|ctx| {
                 ctx.set(b"counter", &TypedValue::I64(i))?;
                 ctx.log_bytes(b"increment")?;

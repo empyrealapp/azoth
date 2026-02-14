@@ -58,7 +58,9 @@ alloy-transport-http = { version = "0.6", optional = true }
 
 [features]
 default = []
-onchain = ["alloy-primitives", "alloy-provider", "alloy-network", "alloy-rpc-types", "alloy-signer", "alloy-signer-local", "alloy-sol-types", "alloy-transport-http"]
+alloy = ["alloy-primitives"]
+observe = ["azoth-core/observe"]
+onchain = ["alloy", "alloy-provider", "alloy-network", "alloy-rpc-types", "alloy-signer", "alloy-signer-local", "alloy-sol-types", "alloy-transport-http"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

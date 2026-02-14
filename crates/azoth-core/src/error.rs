@@ -71,6 +71,44 @@ pub enum AzothError {
 
 pub type Result<T> = std::result::Result<T, AzothError>;
 
+impl AzothError {
+    /// Wrap this error with additional context.
+    ///
+    /// The context string is prepended to the error message, producing a
+    /// chain like `"during balance update: Transaction error: ..."`.
+    ///
+    /// # Example
+    /// ```ignore
+    /// db.write_txn()
+    ///     .map_err(|e| e.context("during balance update"))?;
+    /// ```
+    pub fn context(self, msg: impl Into<String>) -> Self {
+        let ctx = msg.into();
+        AzothError::Internal(format!("{}: {}", ctx, self))
+    }
+}
+
+/// Extension trait to add `.context()` on `Result<T, AzothError>`.
+///
+/// Mirrors the ergonomics of `anyhow::Context`.
+pub trait ResultExt<T> {
+    /// If the result is `Err`, wrap the error with additional context.
+    fn context(self, msg: impl Into<String>) -> Result<T>;
+
+    /// If the result is `Err`, wrap the error with a lazily-evaluated context.
+    fn with_context<F: FnOnce() -> String>(self, f: F) -> Result<T>;
+}
+
+impl<T> ResultExt<T> for Result<T> {
+    fn context(self, msg: impl Into<String>) -> Result<T> {
+        self.map_err(|e| e.context(msg))
+    }
+
+    fn with_context<F: FnOnce() -> String>(self, f: F) -> Result<T> {
+        self.map_err(|e| e.context(f()))
+    }
+}
+
 // Custom Error Types:
 //
 // Azoth supports custom error types through the `#[from] anyhow::Error` variant.

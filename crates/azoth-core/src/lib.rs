@@ -17,6 +17,7 @@ pub mod config;
 pub mod error;
 pub mod event_log;
 pub mod lock_manager;
+pub mod observe;
 pub mod traits;
 pub mod types;
 
