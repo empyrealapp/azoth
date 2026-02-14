@@ -54,19 +54,28 @@ pub struct MultiLockGuard<'a> {
 }
 
 impl LockManager {
-    /// Create a new lock manager with the specified number of stripes
+    /// Create a new lock manager with the specified number of stripes.
     ///
     /// # Arguments
     ///
     /// * `num_stripes` - Number of lock stripes (common values: 256, 512, 1024).
-    ///   More stripes = less contention but more memory.
+    ///   More stripes = less contention but more memory. Must be > 0.
     /// * `default_timeout` - Default timeout for lock acquisition.
     ///
-    /// # Panics
+    /// # Returns
     ///
-    /// Panics if `num_stripes` is 0.
+    /// `Err(AzothError::Config)` if `num_stripes` is 0.
     pub fn new(num_stripes: usize, default_timeout: Duration) -> Self {
-        assert!(num_stripes > 0, "num_stripes must be positive");
+        // Clamp to 1 instead of panicking — a single stripe still works (just no parallelism).
+        let num_stripes = if num_stripes == 0 {
+            tracing::warn!(
+                "LockManager created with num_stripes=0, defaulting to 1. \
+                 This is a configuration error — set ARCANA_KEY_LOCK_STRIPES > 0."
+            );
+            1
+        } else {
+            num_stripes
+        };
         let stripes = (0..num_stripes).map(|_| Mutex::new(())).collect();
 
         Self {
@@ -76,7 +85,7 @@ impl LockManager {
         }
     }
 
-    /// Create a lock manager with default timeout
+    /// Create a lock manager with default timeout.
     pub fn with_stripes(num_stripes: usize) -> Self {
         Self::new(num_stripes, Duration::from_millis(DEFAULT_LOCK_TIMEOUT_MS))
     }

@@ -43,6 +43,26 @@ pub struct FileEventLogConfig {
     /// buffered events on a process crash (the OS-level file won't be corrupted,
     /// but un-flushed events will be lost).
     pub flush_on_append: bool,
+
+    /// Whether to fsync (File::sync_all) after batch writes for full durability.
+    ///
+    /// When `true`, data is guaranteed to be on disk (not just OS page cache)
+    /// after each batch commit. This is the strongest durability guarantee but
+    /// has higher latency. Default: `true` for safety.
+    pub sync_on_commit: bool,
+
+    /// Whether to enable the background disk space monitor.
+    /// Default: `false` (disabled). Enable for environments where
+    /// disk exhaustion is a real concern (e.g. shared hosts, small volumes).
+    pub enable_disk_monitor: bool,
+
+    /// Minimum disk space (bytes) to reserve before warning about low disk.
+    /// Default: 100 MB. Only used when `enable_disk_monitor` is `true`.
+    pub min_disk_space_bytes: u64,
+
+    /// How often (in seconds) to check disk space. Default: 60.
+    /// Only used when `enable_disk_monitor` is `true`.
+    pub disk_check_interval_secs: u64,
 }
 
 impl Default for FileEventLogConfig {
@@ -55,6 +75,10 @@ impl Default for FileEventLogConfig {
             max_event_size: 4 * 1024 * 1024,   // 4MB single-event limit
             max_batch_bytes: 64 * 1024 * 1024, // 64MB batch limit
             flush_on_append: true,
+            sync_on_commit: true,
+            enable_disk_monitor: false,
+            min_disk_space_bytes: 100 * 1024 * 1024, // 100 MB
+            disk_check_interval_secs: 60,
         }
     }
 }
@@ -88,6 +112,10 @@ pub struct FileEventLog {
     /// instead of polling, giving near-zero-latency event processing with zero
     /// CPU waste when idle.
     event_notify: Option<Arc<Notify>>,
+    /// Atomic flag set by the background disk space monitor.
+    /// When `true`, available disk space is below `min_disk_space_bytes`.
+    /// Checked by the commit path to log warnings without blocking writes.
+    low_disk_space: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl FileEventLog {
@@ -120,6 +148,32 @@ impl FileEventLog {
             file,
         )));
 
+        let low_disk_space = Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        // Perform initial disk space check (only if monitor is enabled)
+        if config.enable_disk_monitor {
+            match fs4::available_space(&config.base_dir) {
+                Ok(available) => {
+                    if available < config.min_disk_space_bytes {
+                        low_disk_space.store(true, std::sync::atomic::Ordering::Relaxed);
+                        tracing::warn!(
+                            available_mb = available / (1024 * 1024),
+                            min_mb = config.min_disk_space_bytes / (1024 * 1024),
+                            path = %config.base_dir.display(),
+                            "Low disk space on event log volume"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        path = %config.base_dir.display(),
+                        "Could not check disk space on event log volume"
+                    );
+                }
+            }
+        }
+
         Ok(Self {
             config,
             meta: Arc::new(Mutex::new(meta)),
@@ -127,6 +181,7 @@ impl FileEventLog {
             writer,
             current_file_num,
             event_notify: None,
+            low_disk_space,
         })
     }
 
@@ -142,6 +197,73 @@ impl FileEventLog {
     /// Get a clone of the event notification handle (if set).
     pub fn event_notify(&self) -> Option<Arc<Notify>> {
         self.event_notify.clone()
+    }
+
+    /// Start the background disk space monitor.
+    ///
+    /// Checks available disk space every `disk_check_interval_secs` seconds
+    /// and sets the `low_disk_space` flag when space drops below
+    /// `min_disk_space_bytes`. The commit path reads this flag (zero-cost
+    /// atomic load) to log warnings.
+    ///
+    /// Returns `None` if `enable_disk_monitor` is `false` in the config.
+    /// Otherwise returns a `JoinHandle` that runs until the process shuts down.
+    pub fn start_disk_monitor(&self) -> Option<tokio::task::JoinHandle<()>> {
+        if !self.config.enable_disk_monitor {
+            return None;
+        }
+
+        let flag = self.low_disk_space.clone();
+        let base_dir = self.config.base_dir.clone();
+        let min_bytes = self.config.min_disk_space_bytes;
+        let interval_secs = self.config.disk_check_interval_secs;
+
+        Some(tokio::spawn(async move {
+            let mut interval =
+                tokio::time::interval(std::time::Duration::from_secs(interval_secs));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                interval.tick().await;
+
+                match fs4::available_space(&base_dir) {
+                    Ok(available) => {
+                        let was_low = flag.load(std::sync::atomic::Ordering::Relaxed);
+                        let is_low = available < min_bytes;
+                        flag.store(is_low, std::sync::atomic::Ordering::Relaxed);
+
+                        if is_low && !was_low {
+                            tracing::warn!(
+                                available_mb = available / (1024 * 1024),
+                                min_mb = min_bytes / (1024 * 1024),
+                                path = %base_dir.display(),
+                                "Disk space dropped below threshold on event log volume"
+                            );
+                        } else if !is_low && was_low {
+                            tracing::info!(
+                                available_mb = available / (1024 * 1024),
+                                path = %base_dir.display(),
+                                "Disk space recovered above threshold on event log volume"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            error = %e,
+                            path = %base_dir.display(),
+                            "Failed to check disk space"
+                        );
+                    }
+                }
+            }
+        }))
+    }
+
+    /// Returns `true` if available disk space is below the configured threshold.
+    ///
+    /// This is a zero-cost atomic load — safe to call on every commit.
+    pub fn is_low_disk_space(&self) -> bool {
+        self.low_disk_space.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Get path to a log file by number
@@ -260,10 +382,16 @@ impl EventLog for FileEventLog {
         // Write event entry
         self.write_event_entry(event_id, event_bytes)?;
 
-        // Conditionally flush based on config
+        // Flush BufWriter to OS page cache
         if self.config.flush_on_append {
             let mut writer = self.writer.lock();
             writer.flush()?;
+        }
+
+        // Fsync to disk for full durability
+        if self.config.sync_on_commit {
+            let writer = self.writer.lock();
+            writer.get_ref().sync_all()?;
         }
 
         // Update metadata
@@ -353,10 +481,16 @@ impl EventLog for FileEventLog {
             writer.write_all(&buffer)?;
         }
 
-        // Conditionally flush based on config
+        // Flush BufWriter to OS page cache
         if self.config.flush_on_append {
             let mut writer = self.writer.lock();
             writer.flush()?;
+        }
+
+        // Fsync to disk for full durability (guarantees events survive power loss)
+        if self.config.sync_on_commit {
+            let writer = self.writer.lock();
+            writer.get_ref().sync_all()?;
         }
 
         // Update metadata
@@ -630,6 +764,8 @@ mod tests {
             max_event_size: 1024 * 1024,
             max_batch_bytes: 16 * 1024 * 1024,
             flush_on_append: true,
+            sync_on_commit: false, // Disable fsync in tests for speed
+            ..Default::default()
         };
         let log = FileEventLog::open(config).unwrap();
         (log, temp_dir)

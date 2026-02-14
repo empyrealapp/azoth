@@ -62,6 +62,23 @@ pub enum AzothError {
     #[error("Circuit breaker is open, rejecting request")]
     CircuitBreakerOpen,
 
+    #[error("Event log write failed after state commit (events saved to dead letter queue): {0}")]
+    EventLogWriteFailed(String),
+
+    #[error("Key too large ({size} bytes, max {max}): {context}")]
+    KeyTooLarge {
+        size: usize,
+        max: usize,
+        context: String,
+    },
+
+    #[error("Value too large ({size} bytes, max {max}): {context}")]
+    ValueTooLarge {
+        size: usize,
+        max: usize,
+        context: String,
+    },
+
     #[error("Internal error: {0}")]
     Internal(String),
 

@@ -4,7 +4,7 @@ use azoth_core::{
     types::EventId,
     ProjectorConfig,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
@@ -23,6 +23,11 @@ where
     /// The `FileEventLog` fires `notify_waiters()` after every successful append,
     /// giving near-zero-latency projection with zero CPU waste when idle.
     event_notify: Option<Arc<Notify>>,
+    /// Running count of event ID gaps detected across all `run_once()` calls.
+    /// Used for operational monitoring / health checks.
+    total_gaps_detected: Arc<AtomicU64>,
+    /// Running count of individual missing event IDs across all gaps.
+    total_events_skipped: Arc<AtomicU64>,
 }
 
 impl<C, P> Projector<C, P>
@@ -37,6 +42,8 @@ where
             config,
             shutdown: Arc::new(AtomicBool::new(false)),
             event_notify: None,
+            total_gaps_detected: Arc::new(AtomicU64::new(0)),
+            total_events_skipped: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -50,7 +57,12 @@ where
         self
     }
 
-    /// Run one iteration of the projector loop
+    /// Run one iteration of the projector loop.
+    ///
+    /// Fetches a batch of events from the canonical store and applies them
+    /// to the projection. Detects and tolerates event ID gaps: if the event
+    /// log is missing events (e.g. due to DLQ fallback), the projector logs
+    /// a warning and advances past the gap instead of blocking.
     pub fn run_once(&self) -> Result<ProjectorStats> {
         let start = Instant::now();
 
@@ -101,7 +113,17 @@ where
             return Ok(ProjectorStats::empty());
         }
 
-        // Apply events in a transaction
+        // Detect event ID gaps (events lost to DLQ)
+        let (gaps_detected, events_skipped) = detect_gaps(from, &events);
+
+        if gaps_detected > 0 {
+            self.total_gaps_detected
+                .fetch_add(gaps_detected, Ordering::Relaxed);
+            self.total_events_skipped
+                .fetch_add(events_skipped, Ordering::Relaxed);
+        }
+
+        // Apply events in a transaction (only events we actually have)
         let mut txn = self.projection.begin_txn()?;
         txn.apply_batch(&events)?;
 
@@ -113,6 +135,8 @@ where
             bytes_processed: total_bytes,
             duration: start.elapsed(),
             new_cursor: last_id,
+            gaps_detected,
+            events_skipped,
         })
     }
 
@@ -141,12 +165,23 @@ where
                                 .await;
                         }
                     } else {
-                        tracing::debug!(
-                            "Applied {} events, {} bytes in {:?}",
-                            stats.events_applied,
-                            stats.bytes_processed,
-                            stats.duration
-                        );
+                        if stats.gaps_detected > 0 {
+                            tracing::warn!(
+                                events = stats.events_applied,
+                                bytes = stats.bytes_processed,
+                                gaps = stats.gaps_detected,
+                                skipped = stats.events_skipped,
+                                elapsed = ?stats.duration,
+                                "Applied events with gaps (events may be in DLQ)"
+                            );
+                        } else {
+                            tracing::debug!(
+                                "Applied {} events, {} bytes in {:?}",
+                                stats.events_applied,
+                                stats.bytes_processed,
+                                stats.duration
+                            );
+                        }
                     }
                 }
                 Err(e) => {
@@ -163,6 +198,16 @@ where
     /// Signal graceful shutdown
     pub fn shutdown(&self) {
         self.shutdown.store(true, Ordering::SeqCst);
+    }
+
+    /// Returns the total number of event ID gaps detected across all iterations.
+    pub fn total_gaps_detected(&self) -> u64 {
+        self.total_gaps_detected.load(Ordering::Relaxed)
+    }
+
+    /// Returns the total number of individual event IDs that were skipped due to gaps.
+    pub fn total_events_skipped(&self) -> u64 {
+        self.total_events_skipped.load(Ordering::Relaxed)
     }
 
     /// Check lag (events behind)
@@ -193,6 +238,10 @@ pub struct ProjectorStats {
     pub bytes_processed: usize,
     pub duration: Duration,
     pub new_cursor: EventId,
+    /// Number of event ID gaps detected in this batch.
+    pub gaps_detected: u64,
+    /// Number of individual event IDs that were skipped due to gaps.
+    pub events_skipped: u64,
 }
 
 impl ProjectorStats {
@@ -202,6 +251,140 @@ impl ProjectorStats {
             bytes_processed: 0,
             duration: Duration::from_secs(0),
             new_cursor: 0,
+            gaps_detected: 0,
+            events_skipped: 0,
         }
+    }
+}
+
+/// Detect event ID gaps in a batch of events.
+///
+/// Checks two types of gaps:
+/// 1. Between the expected first event ID and the actual first event
+/// 2. Between consecutive events within the batch
+///
+/// Returns `(gaps_detected, events_skipped)`.
+fn detect_gaps(expected_first: EventId, events: &[(EventId, Vec<u8>)]) -> (u64, u64) {
+    if events.is_empty() {
+        return (0, 0);
+    }
+
+    let mut gaps_detected: u64 = 0;
+    let mut events_skipped: u64 = 0;
+
+    // Check gap between cursor and first event
+    let actual_first = events[0].0;
+    if actual_first > expected_first {
+        let missing = actual_first - expected_first;
+        gaps_detected += 1;
+        events_skipped += missing;
+        tracing::warn!(
+            expected_id = expected_first,
+            actual_id = actual_first,
+            missing_count = missing,
+            "Projector: event gap detected between cursor and first event \
+             (events {}-{} missing, likely in DLQ). Advancing past gap.",
+            expected_first,
+            actual_first - 1,
+        );
+    }
+
+    // Check gaps within the batch
+    for window in events.windows(2) {
+        let prev_id = window[0].0;
+        let curr_id = window[1].0;
+        let expected = prev_id + 1;
+        if curr_id > expected {
+            let missing = curr_id - expected;
+            gaps_detected += 1;
+            events_skipped += missing;
+            tracing::warn!(
+                expected_id = expected,
+                actual_id = curr_id,
+                missing_count = missing,
+                "Projector: event gap detected within batch \
+                 (events {}-{} missing, likely in DLQ). Skipping gap.",
+                expected,
+                curr_id - 1,
+            );
+        }
+    }
+
+    (gaps_detected, events_skipped)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn event(id: EventId) -> (EventId, Vec<u8>) {
+        (id, vec![id as u8])
+    }
+
+    #[test]
+    fn test_no_gaps_sequential() {
+        let events = vec![event(5), event(6), event(7)];
+        let (gaps, skipped) = detect_gaps(5, &events);
+        assert_eq!(gaps, 0);
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn test_gap_before_first_event() {
+        // Expected 5, but first available event is 8 (5,6,7 missing)
+        let events = vec![event(8), event(9), event(10)];
+        let (gaps, skipped) = detect_gaps(5, &events);
+        assert_eq!(gaps, 1);
+        assert_eq!(skipped, 3); // events 5, 6, 7
+    }
+
+    #[test]
+    fn test_gap_within_batch() {
+        // 5,6 present, 7,8 missing, 9 present
+        let events = vec![event(5), event(6), event(9)];
+        let (gaps, skipped) = detect_gaps(5, &events);
+        assert_eq!(gaps, 1);
+        assert_eq!(skipped, 2); // events 7, 8
+    }
+
+    #[test]
+    fn test_multiple_gaps() {
+        // Gap before first (0,1 missing), gap mid-batch (4 missing), gap again (7 missing)
+        let events = vec![event(2), event(3), event(5), event(8)];
+        let (gaps, skipped) = detect_gaps(0, &events);
+        assert_eq!(gaps, 3); // before first, between 3-5, between 5-8
+        assert_eq!(skipped, 2 + 1 + 2); // 0-1 + 4 + 6-7
+    }
+
+    #[test]
+    fn test_single_event_no_gap() {
+        let events = vec![event(42)];
+        let (gaps, skipped) = detect_gaps(42, &events);
+        assert_eq!(gaps, 0);
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn test_single_event_with_gap() {
+        let events = vec![event(45)];
+        let (gaps, skipped) = detect_gaps(42, &events);
+        assert_eq!(gaps, 1);
+        assert_eq!(skipped, 3); // events 42, 43, 44
+    }
+
+    #[test]
+    fn test_empty_events() {
+        let events: Vec<(EventId, Vec<u8>)> = vec![];
+        let (gaps, skipped) = detect_gaps(0, &events);
+        assert_eq!(gaps, 0);
+        assert_eq!(skipped, 0);
+    }
+
+    #[test]
+    fn test_first_event_matches_exactly() {
+        let events = vec![event(0), event(1), event(2)];
+        let (gaps, skipped) = detect_gaps(0, &events);
+        assert_eq!(gaps, 0);
+        assert_eq!(skipped, 0);
     }
 }
