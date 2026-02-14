@@ -164,24 +164,22 @@ where
                             tokio::time::sleep(Duration::from_millis(self.config.poll_interval_ms))
                                 .await;
                         }
+                    } else if stats.gaps_detected > 0 {
+                        tracing::warn!(
+                            events = stats.events_applied,
+                            bytes = stats.bytes_processed,
+                            gaps = stats.gaps_detected,
+                            skipped = stats.events_skipped,
+                            elapsed = ?stats.duration,
+                            "Applied events with gaps (events may be in DLQ)"
+                        );
                     } else {
-                        if stats.gaps_detected > 0 {
-                            tracing::warn!(
-                                events = stats.events_applied,
-                                bytes = stats.bytes_processed,
-                                gaps = stats.gaps_detected,
-                                skipped = stats.events_skipped,
-                                elapsed = ?stats.duration,
-                                "Applied events with gaps (events may be in DLQ)"
-                            );
-                        } else {
-                            tracing::debug!(
-                                "Applied {} events, {} bytes in {:?}",
-                                stats.events_applied,
-                                stats.bytes_processed,
-                                stats.duration
-                            );
-                        }
+                        tracing::debug!(
+                            "Applied {} events, {} bytes in {:?}",
+                            stats.events_applied,
+                            stats.bytes_processed,
+                            stats.duration
+                        );
                     }
                 }
                 Err(e) => {
