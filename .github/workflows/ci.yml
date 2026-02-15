@@ -103,6 +103,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Check documentation
-        run: cargo doc --workspace --all-features --no-deps
+        run: cargo doc --workspace --all-features
         env:
           RUSTDOCFLAGS: -D warnings
