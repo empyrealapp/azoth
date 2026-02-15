@@ -46,6 +46,7 @@ pub struct LmdbCanonicalStore {
     pub(crate) meta_db: Database,
     pub(crate) config_path: std::path::PathBuf,
     pub(crate) event_log: Arc<FileEventLog>,
+    dead_letter_queue: Arc<crate::dead_letter_queue::DeadLetterQueue>,
     lock_manager: Arc<LockManager>,
     write_lock: Arc<Mutex<()>>,
     paused: Arc<AtomicBool>,
@@ -179,6 +180,28 @@ impl CanonicalStore for LmdbCanonicalStore {
         event_log.set_event_notify(event_notify.clone());
         let event_log = Arc::new(event_log);
 
+        // Initialize dead letter queue for failed event log writes
+        let dlq_dir = cfg.path.join("dlq");
+        let dead_letter_queue = crate::dead_letter_queue::DeadLetterQueue::open(&dlq_dir)?;
+
+        // Check for existing DLQ entries on startup (operational warning)
+        match dead_letter_queue.entry_count() {
+            Ok(count) if count > 0 => {
+                tracing::warn!(
+                    dlq_entries = count,
+                    dlq_path = %dlq_dir.display(),
+                    "Dead letter queue has {} unprocessed entries from previous runs. \
+                     These events were committed to state but not to the event log. \
+                     Run the DLQ recovery tool to replay them.",
+                    count
+                );
+            }
+            Ok(_) => {}
+            Err(e) => {
+                tracing::warn!("Failed to check DLQ entry count: {}", e);
+            }
+        }
+
         // Initialize metadata if needed
         {
             let mut txn = env
@@ -238,6 +261,7 @@ impl CanonicalStore for LmdbCanonicalStore {
             meta_db,
             config_path: cfg.path.clone(),
             event_log,
+            dead_letter_queue,
             lock_manager,
             write_lock: Arc::new(Mutex::new(())),
             paused: Arc::new(AtomicBool::new(false)),
@@ -294,6 +318,7 @@ impl CanonicalStore for LmdbCanonicalStore {
             self.state_db,
             self.meta_db,
             self.event_log.clone(),
+            self.dead_letter_queue.clone(),
             Arc::downgrade(&self.txn_counter),
             self.preflight_cache.clone(),
         ))
@@ -607,6 +632,7 @@ impl LmdbCanonicalStore {
         let state_db = self.state_db;
         let meta_db = self.meta_db;
         let event_log = self.event_log.clone();
+        let dead_letter_queue = self.dead_letter_queue.clone();
         let txn_counter = self.txn_counter.clone();
         let preflight_cache = self.preflight_cache.clone();
         let paused = self.paused.clone();
@@ -633,6 +659,7 @@ impl LmdbCanonicalStore {
                 state_db,
                 meta_db,
                 event_log,
+                dead_letter_queue,
                 Arc::downgrade(&txn_counter),
                 preflight_cache,
             );
@@ -664,6 +691,7 @@ impl LmdbCanonicalStore {
             last_event_id: None,
             state_keys_written: 1,
             state_keys_deleted: 0,
+            dlq_events: 0,
         })
     }
 
@@ -683,6 +711,7 @@ impl LmdbCanonicalStore {
             last_event_id: None,
             state_keys_written: 0,
             state_keys_deleted: 1,
+            dlq_events: 0,
         })
     }
 

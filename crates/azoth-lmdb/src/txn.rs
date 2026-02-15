@@ -11,18 +11,28 @@ use std::sync::{
     Arc, Weak,
 };
 
+use crate::dead_letter_queue::DeadLetterQueue;
 use crate::keys::meta_keys;
 use crate::preflight_cache::PreflightCache;
+
+/// Maximum number of retries for event log writes before falling back to DLQ.
+const EVENT_LOG_WRITE_RETRIES: usize = 3;
+
+/// Delay between retries in milliseconds (doubles each attempt).
+const EVENT_LOG_RETRY_BASE_DELAY_MS: u64 = 10;
 
 /// Write transaction for LMDB canonical store
 ///
 /// State updates go to LMDB for transactional integrity.
 /// Events are buffered and written to FileEventLog on commit.
+/// If event log writes fail after retries, events are persisted
+/// to a dead letter queue (DLQ) for later recovery.
 pub struct LmdbWriteTxn<'a> {
     txn: Option<RwTransaction<'a>>,
     state_db: Database,
     meta_db: Database,
     event_log: Arc<FileEventLog>,
+    dead_letter_queue: Arc<DeadLetterQueue>,
     pending_events: Vec<Vec<u8>>,
     stats: TxnStats,
     txn_counter: Weak<AtomicUsize>,
@@ -38,6 +48,8 @@ struct TxnStats {
     events_written: usize,
     first_event_id: Option<EventId>,
     last_event_id: Option<EventId>,
+    /// Events that went to the dead letter queue instead of the event log.
+    dlq_events: usize,
 }
 
 /// Read-only transaction for LMDB canonical store
@@ -72,6 +84,7 @@ impl<'a> LmdbWriteTxn<'a> {
         state_db: Database,
         meta_db: Database,
         event_log: Arc<FileEventLog>,
+        dead_letter_queue: Arc<DeadLetterQueue>,
         txn_counter: Weak<AtomicUsize>,
         preflight_cache: Arc<PreflightCache>,
     ) -> Self {
@@ -80,6 +93,7 @@ impl<'a> LmdbWriteTxn<'a> {
             state_db,
             meta_db,
             event_log,
+            dead_letter_queue,
             pending_events: Vec::new(),
             stats: TxnStats {
                 state_keys_written: 0,
@@ -87,6 +101,7 @@ impl<'a> LmdbWriteTxn<'a> {
                 events_written: 0,
                 first_event_id: None,
                 last_event_id: None,
+                dlq_events: 0,
             },
             txn_counter,
             counter_decremented: false,
@@ -160,6 +175,34 @@ impl<'a> CanonicalTxn for LmdbWriteTxn<'a> {
     }
 
     fn put_state(&mut self, key: &[u8], value: &[u8]) -> Result<()> {
+        // LMDB default max key size is 511 bytes. Reject oversized keys early
+        // with a clear error instead of letting LMDB produce cryptic failures.
+        const MAX_KEY_SIZE: usize = 511;
+        if key.len() > MAX_KEY_SIZE {
+            return Err(AzothError::KeyTooLarge {
+                size: key.len(),
+                max: MAX_KEY_SIZE,
+                context: format!(
+                    "key prefix: {:?}",
+                    String::from_utf8_lossy(&key[..key.len().min(64)])
+                ),
+            });
+        }
+
+        // LMDB values can be up to ~2GB but we cap at 16MB to prevent
+        // accidental bloat and keep mmap usage reasonable.
+        const MAX_VALUE_SIZE: usize = 16 * 1024 * 1024; // 16 MB
+        if value.len() > MAX_VALUE_SIZE {
+            return Err(AzothError::ValueTooLarge {
+                size: value.len(),
+                max: MAX_VALUE_SIZE,
+                context: format!(
+                    "key: {:?}",
+                    String::from_utf8_lossy(&key[..key.len().min(64)])
+                ),
+            });
+        }
+
         let txn = self
             .txn
             .as_mut()
@@ -262,23 +305,102 @@ impl<'a> CanonicalTxn for LmdbWriteTxn<'a> {
             .map_err(|e| AzothError::Transaction(e.to_string()))?;
         }
 
+        // Pre-commit check: warn if disk space is low (zero-cost atomic read)
+        if !self.pending_events.is_empty() && self.event_log.is_low_disk_space() {
+            tracing::warn!(
+                event_count = self.pending_events.len(),
+                "Committing transaction with LOW DISK SPACE on event log volume. \
+                 Event log write may fail; events would go to dead letter queue."
+            );
+        }
+
         // Phase 1: Commit LMDB state transaction
         let txn = self.txn.take().unwrap();
         txn.commit()
             .map_err(|e| AzothError::Transaction(e.to_string()))?;
 
-        // Phase 2: Write events to file-based log
-        // This happens AFTER state commit succeeds
-        // If this fails, it's a critical error (should rarely happen)
+        // Phase 2: Write events to file-based log (durable with retries + DLQ fallback)
+        //
+        // This happens AFTER state commit succeeds. Since LMDB state is already
+        // committed, we MUST NOT return an error that would cause callers to retry
+        // the entire transaction (which would double-apply state changes).
+        //
+        // Strategy:
+        //   1. Try event log write up to EVENT_LOG_WRITE_RETRIES times
+        //   2. If all retries fail, persist events to the dead letter queue (DLQ)
+        //   3. Return Ok (state IS committed) but log a critical warning
+        //   4. The DLQ can be drained by a recovery process to replay events
         if !self.pending_events.is_empty() {
             let first_event_id = self
                 .stats
                 .first_event_id
                 .ok_or_else(|| AzothError::InvalidState("Missing first_event_id".into()))?;
 
-            // Write events with pre-allocated EventIds from LMDB
-            self.event_log
-                .append_batch_with_ids(first_event_id, &self.pending_events)?;
+            let mut last_error = None;
+            for attempt in 0..EVENT_LOG_WRITE_RETRIES {
+                match self
+                    .event_log
+                    .append_batch_with_ids(first_event_id, &self.pending_events)
+                {
+                    Ok(()) => {
+                        if attempt > 0 {
+                            tracing::warn!(
+                                attempt = attempt + 1,
+                                first_event_id,
+                                "Event log write succeeded after retry"
+                            );
+                        }
+                        last_error = None;
+                        break;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            attempt = attempt + 1,
+                            max_attempts = EVENT_LOG_WRITE_RETRIES,
+                            first_event_id,
+                            error = %e,
+                            "Event log write failed, retrying"
+                        );
+                        last_error = Some(e);
+                        // Exponential backoff: 10ms, 20ms, 40ms...
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            EVENT_LOG_RETRY_BASE_DELAY_MS << attempt,
+                        ));
+                    }
+                }
+            }
+
+            // If all retries failed, write to DLQ as last resort
+            if let Some(err) = last_error {
+                let err_msg = err.to_string();
+                tracing::error!(
+                    first_event_id,
+                    event_count = self.pending_events.len(),
+                    error = %err_msg,
+                    "Event log write failed after all retries, writing to dead letter queue"
+                );
+
+                // Track that events went to DLQ so callers can detect this
+                self.stats.dlq_events = self.pending_events.len();
+
+                // DLQ write is our last safety net — if THIS fails, we have a serious problem
+                if let Err(dlq_err) = self.dead_letter_queue.write_batch(
+                    first_event_id,
+                    &self.pending_events,
+                    &err_msg,
+                ) {
+                    // This is the worst case: state committed, events lost, DLQ failed.
+                    // Log the catastrophic error with all event details.
+                    tracing::error!(
+                        first_event_id,
+                        event_count = self.pending_events.len(),
+                        event_log_error = %err_msg,
+                        dlq_error = %dlq_err,
+                        "CATASTROPHIC: Both event log and DLQ writes failed. Events may be lost."
+                    );
+                    // Still return Ok — state IS committed and we must not cause a retry
+                }
+            }
         }
 
         // Phase 3: Invalidate preflight cache for modified keys
@@ -293,6 +415,7 @@ impl<'a> CanonicalTxn for LmdbWriteTxn<'a> {
             last_event_id: self.stats.last_event_id,
             state_keys_written: self.stats.state_keys_written,
             state_keys_deleted: self.stats.state_keys_deleted,
+            dlq_events: self.stats.dlq_events,
         })
     }
 

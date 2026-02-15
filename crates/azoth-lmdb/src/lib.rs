@@ -11,6 +11,7 @@
 //! - Optional read transaction pooling for concurrent reads
 
 pub mod backup;
+pub mod dead_letter_queue;
 pub mod iter;
 pub mod keys;
 pub mod preflight_cache;
@@ -19,6 +20,7 @@ pub mod state_iter;
 pub mod store;
 pub mod txn;
 
+pub use dead_letter_queue::DeadLetterQueue;
 pub use preflight_cache::EvictionPolicy;
 pub use read_pool::{LmdbReadPool, PooledLmdbReadTxn};
 pub use store::LmdbCanonicalStore;

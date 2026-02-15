@@ -19,6 +19,7 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 parking_lot = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
+fs4 = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

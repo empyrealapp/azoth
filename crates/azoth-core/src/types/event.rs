@@ -23,6 +23,12 @@ pub struct CommitInfo {
 
     /// Number of state keys deleted
     pub state_keys_deleted: usize,
+
+    /// Number of events that were written to the dead letter queue
+    /// because the event log write failed after state commit.
+    /// When this is > 0, the state was committed but the event log
+    /// has a gap. Callers should surface this as an operational alert.
+    pub dlq_events: usize,
 }
 
 impl CommitInfo {
@@ -33,6 +39,7 @@ impl CommitInfo {
             last_event_id: None,
             state_keys_written: 0,
             state_keys_deleted: 0,
+            dlq_events: 0,
         }
     }
 }
